@@ -2,6 +2,7 @@ import LobbyRepository from "../../repositories/v1/lobby.repository";
 import UserService from "./user.service";
 import redis from "../../config/redis";
 import { randomUUID } from "crypto";
+import UserRepository from "../../repositories/v1/user.repository";
 
 class LobbyService {
     private LOBBY_EXPIRATION = 1800;
@@ -97,6 +98,25 @@ class LobbyService {
 
         await redis.srem("open_lobbies", lobbyId);
         await redis.del(key);
+    }
+
+    async getUsers(lobbyId: string) {
+        const lobbyData = await redis.get(`lobby:${lobbyId}`);
+
+        if(!lobbyData) return [];
+
+        const players: string[] = JSON.parse(lobbyData).players;
+
+        const users = await UserRepository.findByIds(players);
+
+        return users.map(user => ({ id: user.id, username: user.username, status: 'ready' }));
+    }
+
+    async generateTask() {
+        return {
+            question: 'Реши пример 1 + 1',
+            image: 'https://habrastorage.org/getpro/habr/upload_files/a9f/2b3/4bc/a9f2b34bc409412fd453392c353597c5.jpg',
+        }
     }
 }
 

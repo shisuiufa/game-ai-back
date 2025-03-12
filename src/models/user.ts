@@ -22,7 +22,7 @@ class User extends Model<InferAttributes<User>, InferCreationAttributes<User>> {
 
         const payload = { id: this.id };
 
-        return jwt.sign(payload, SECRET_ACCESS_TOKEN, { expiresIn: "20m" });
+        return jwt.sign(payload, SECRET_ACCESS_TOKEN, { expiresIn: "40m" });
     }
 
     generateRefreshJWT(): string {
@@ -30,7 +30,7 @@ class User extends Model<InferAttributes<User>, InferCreationAttributes<User>> {
             throw new Error("SECRET_REFRESH_TOKEN is not defined");
         }
 
-        return jwt.sign({ id: this.id }, process.env.SECRET_REFRESH_TOKEN, { expiresIn: "7d" });
+        return jwt.sign({ id: this.id }, process.env.SECRET_REFRESH_TOKEN, { expiresIn: "30d" });
     }
 }
 
@@ -44,6 +44,7 @@ User.init(
         username: {
             type: DataTypes.STRING(50),
             allowNull: false,
+            unique: true,
         },
         email: {
             type: DataTypes.STRING,

@@ -2,12 +2,19 @@ import User from "../../models/user";
 import bcrypt from "bcrypt";
 import { UserRegistrationResource, UserLoginResource } from "../../schemas/v1/user.schema";
 
+
 export class AuthService {
     static async register(data: UserRegistrationResource) {
         const existingUser = await User.findOne({where: {email: data.email.toLowerCase().trim()}});
 
         if (existingUser) {
             throw { status: 400, message: "User already exists. Please log in instead." };
+        }
+
+        const existingUserByUsername = await User.findOne({ where: {username: data.username.trim() } });
+
+        if (existingUserByUsername) {
+            throw { status: 400, message: "Username already taken. Please choose another one." };
         }
 
         const user = await User.create({
