@@ -30,7 +30,12 @@ class GameWebSocket {
             const decoded = TokenService.verifyToken(token, SECRET_ACCESS_TOKEN);
 
             if (!decoded) {
-                ws.send(JSON.stringify({ status: "error", message: "Invalid or expired token", code: 401, refresh: true }));
+                ws.send(JSON.stringify({
+                    status: "error",
+                    message: "Invalid or expired token",
+                    code: 401,
+                    refresh: true
+                }));
                 ws.close();
                 return;
             }
@@ -44,29 +49,41 @@ class GameWebSocket {
                     if (data.type === "findGame") {
                         ws.send(JSON.stringify({status: "searching", message: "Поиск игры начался..."}));
 
-                        let lobbyId = await LobbyService.findExistingLobby(ws.userId);
+                        let lobbyId = await LobbyService.getActiveLobbyIdByPlayer(ws.userId)
 
-                        if (!lobbyId) {
-                            lobbyId = await LobbyService.createLobby(ws.userId);
-                        } else {
-                            await LobbyService.addPlayerToLobby(lobbyId, ws.userId);
+                        if(!lobbyId) {
+                            lobbyId = await LobbyService.findExistingLobby();
+
+                            if (!lobbyId) {
+                                lobbyId = await LobbyService.createLobby(ws.userId);
+                            } else {
+                                await LobbyService.addPlayerToLobby(lobbyId, ws.userId);
+                            }
                         }
 
-                        const users = await LobbyService.getUsers(lobbyId);
-
                         ws.lobbyId = lobbyId;
+
+                        const users = await LobbyService.getUsers(ws.lobbyId);
+
                         ws.send(JSON.stringify({status: "joined", lobbyId, users}));
 
-                        const key = `lobby:${lobbyId}`;
-                        const lobbyData = JSON.parse(await redis.get(key) || "{}");
+                        const isStarted = await redis.sismember("lobbies:started", lobbyId);
 
-                        if (lobbyData.players && lobbyData.players.length === 2) {
-                            const [player1Id, player2Id] = lobbyData.players;
+                        if(isStarted){
+                            const taskRaw = await redis.hget(`lobby:${lobbyId}`, "task");
+
+                            const task = taskRaw ? JSON.parse(taskRaw) : null;
+
+                            ws.send(JSON.stringify({ status: "game", lobbyId, users, task }));
+                        }
+
+                        if (users.length === 2 && !isStarted) {
+                            const idx = users.map(user => (user.id))
 
                             this.wss.clients.forEach((client) => {
                                 const wsClient = client as ExtWebSocket;
 
-                                if (wsClient.readyState === WebSocket.OPEN && (wsClient.userId === player1Id || wsClient.userId === player2Id)) {
+                                if (wsClient.readyState === WebSocket.OPEN && (wsClient.userId == idx[0] || wsClient.userId == idx[1])) {
                                     wsClient.send(JSON.stringify({
                                         status: "full",
                                         lobbyId,
@@ -77,17 +94,26 @@ class GameWebSocket {
                             });
 
                             setTimeout(async () => {
-                                const updatedUsers = await LobbyService.getUsers(lobbyId);
-                                const task = await LobbyService.generateTask();
+                                redis.sadd("lobbies:started", lobbyId);
+
+                                let taskRaw = await redis.hget(`lobby:${lobbyId}`, "task");
+
+                                if (!taskRaw) {
+                                    taskRaw = JSON.stringify(await LobbyService.generateTask());
+                                    await redis.hset(`lobby:${lobbyId}`, "task", taskRaw);
+                                }
+
+                                const task = taskRaw ? JSON.parse(taskRaw) : null;
+
                                 this.wss.clients.forEach((client) => {
                                     const wsClient = client as ExtWebSocket;
-                                    if (wsClient.readyState === WebSocket.OPEN && (wsClient.userId === player1Id || wsClient.userId === player2Id)) {
+                                    if (wsClient.readyState === WebSocket.OPEN && (wsClient.userId == idx[0] || wsClient.userId == idx[1])) {
                                         wsClient.send(JSON.stringify({
                                             status: "game",
                                             lobbyId,
-                                            users: updatedUsers,
+                                            users,
                                             task,
-                                            message: "Игра началась!"
+                                            message: "Start game!"
                                         }));
                                     }
                                 });

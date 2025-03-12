@@ -5,109 +5,112 @@ import { randomUUID } from "crypto";
 import UserRepository from "../../repositories/v1/user.repository";
 
 class LobbyService {
-    private LOBBY_EXPIRATION = 1800;
+    async getActiveLobbyIdByPlayer(playerId: number): Promise<string | null> {
+        const lobbyId = await redis.get(`player:${playerId}:lobby`);
 
-    async findExistingLobby(playerId: number) {
-        let cursor = "0";
-        const count = 50;
+        if (!lobbyId) return null;
 
-        do {
-            const [newCursor, openLobbies] = await redis.sscan("open_lobbies", cursor, "COUNT", count);
-            cursor = newCursor;
+        const isActive = await redis.sismember("lobbies:active", lobbyId);
 
-            for (const lobbyId of openLobbies) {
-                try {
-                    const lobbyData = await redis.get(`lobby:${lobbyId}`);
-                    if (!lobbyData) continue;
+        return isActive ? lobbyId : null;
+    }
 
-                    const { players, status } = JSON.parse(lobbyData);
-
-                    if (status === "open" && !players.includes(playerId)) {
-                        return lobbyId;
-                    }
-                } catch (error) {
-                    console.error(`Ошибка парсинга JSON для lobby:${lobbyId}:`, error);
-                }
-            }
-        } while (cursor !== "0");
-
-        return null;
+    async findExistingLobby() {
+       return await redis.srandmember("lobbies:open");
     }
 
     async createLobby(player1Id: number): Promise<string> {
-        const existingLobby = await this.findExistingLobby(player1Id);
+        const existingLobby = await this.findExistingLobby();
 
         if (existingLobby) return existingLobby;
 
         const lobbyId = randomUUID();
-        const lobbyData = {
-            players: [player1Id],
-            status: "open",
-        };
-        await redis.set(`lobby:${lobbyId}`, JSON.stringify(lobbyData), "EX", this.LOBBY_EXPIRATION);
-        await redis.sadd("open_lobbies", lobbyId);
+
+        const tx = redis.multi();
+
+        tx.hset(`lobby:${lobbyId}` ,[
+            'player1', player1Id,
+            'player2', "",
+            'answer1', "",
+            'answer2', "",
+            'status', "active"
+        ]);
+
+        tx.expire(`lobby:${lobbyId}`, 1800)
+        tx.sadd("lobbies:open", lobbyId);
+        tx.sadd("lobbies:active", lobbyId);
+        tx.set(`player:${player1Id}:lobby`, lobbyId);
+
+        await tx.exec();
+
         return lobbyId;
     }
 
     async addPlayerToLobby(lobbyId: string, player2Id: number): Promise<void> {
-        const key = `lobby:${lobbyId}`
-        const lobbyData = JSON.parse(await redis.get(key) || "{}");
+        const idx = await this.getUsersIdxLobby(lobbyId);
 
-        if (!lobbyData.players || lobbyData.players.includes(player2Id)) return;
-        if (lobbyData.status !== "open") return;
+        if(idx.length >= 2 || idx.includes(String(player2Id))) return;
 
-        lobbyData.players.push(player2Id);
-        lobbyData.status = "full";
+        const tx = redis.multi();
 
-        await redis.set(key, JSON.stringify(lobbyData), "EX", this.LOBBY_EXPIRATION);
-        await redis.srem("open_lobbies", lobbyId);
+        tx.hset(`lobby:${lobbyId}`, "player2", player2Id);
+        tx.set(`player:${player2Id}:lobby`, lobbyId);
 
-        await LobbyRepository.createLobby(lobbyData.players[0], lobbyData.players[1], lobbyId);
+        tx.srem("lobbies:open", lobbyId);
+        tx.sadd("lobbies:active", lobbyId);
+
+        await tx.exec();
+
+        idx.push(String(player2Id));
+
+        await LobbyRepository.createLobby(Number(idx[0]), Number(idx[1]), lobbyId);
+
         console.log(`🔥 Лобби ${lobbyId} заполнено! Игра начинается!`);
     }
 
     async handlePlayerDisconnect(lobbyId: string, userId: number): Promise<void> {
-        const key = `lobby:${lobbyId}`;
+        const idx = await this.getUsersIdxLobby(lobbyId)
 
-        const lobbyData = JSON.parse(await redis.get(key) || "{}");
+        if (idx.length < 2) {
+            await redis.del(`lobby:${lobbyId}`);
 
-        if (!lobbyData.players) return;
+            await redis.srem("lobbies:open", lobbyId);
+            await redis.srem("lobbies:active", lobbyId);
 
-        if (lobbyData.players.length === 2) {
-            const remainingPlayer = lobbyData.players.find((p: number) => p !== userId);
-            if (remainingPlayer) {
-                console.log(`🚨 Игрок ${userId} вышел. Победитель: ${remainingPlayer}`);
-                await this.endGame(lobbyId, remainingPlayer);
-            }
-        } else {
+            await redis.del(`player:${userId}:lobby`);
+
             console.warn(`⚠️ Игрок ${userId} вышел из пустого лобби ${lobbyId}`);
         }
 
-        await redis.srem("open_lobbies", lobbyId);
-        await redis.del(key);
+        // TODO Добавить обработку когда пользователь вышел из активного лобби
     }
 
     async endGame(lobbyId: string, winnerId: number): Promise<void> {
-        const key = `lobby:${lobbyId}`;
-        const lobbyData = JSON.parse(await redis.get(key) || "{}");
+        const lobbyData = await redis.hgetall(`lobby:${lobbyId}`);
 
-        if (lobbyData.players && lobbyData.players.length === 2) {
+        if (lobbyData.player1 && lobbyData.player2) {
             await LobbyRepository.setWinner(lobbyId, winnerId);
             await UserService.addPoints(winnerId, 10);
         }
 
-        await redis.srem("open_lobbies", lobbyId);
-        await redis.del(key);
+        await redis.srem("lobbies:open", lobbyId);
+        await redis.srem("lobbies:active", lobbyId);
+        await redis.srem("lobbies:started", lobbyId);
+        await redis.del(`lobby:${lobbyId}`);
+
+        console.log(`🎉 Лобби ${lobbyId} завершено! Победитель: ${winnerId}`);
+    }
+
+    async getUsersIdxLobby(lobbyId: string){
+        const idx = await redis.hmget(`lobby:${lobbyId}`, "player1", "player2");
+
+        return idx.filter((item): item is string => item !== null && item !== '');
     }
 
     async getUsers(lobbyId: string) {
-        const lobbyData = await redis.get(`lobby:${lobbyId}`);
+        let idx = await this.getUsersIdxLobby(lobbyId);
 
-        if(!lobbyData) return [];
-
-        const players: string[] = JSON.parse(lobbyData).players;
-
-        const users = await UserRepository.findByIds(players);
+        const users = await UserRepository.findByIds(idx);
 
         return users.map(user => ({ id: user.id, username: user.username, status: 'ready' }));
     }
