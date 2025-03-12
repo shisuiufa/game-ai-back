@@ -3,7 +3,6 @@ import { PORT } from "./config/app";
 import sequelize from "./config/database";
 import { createServer } from "http";
 import GameWebSocket from "../src/ws/GameWebSocket";
-import cookieParser from "cookie-parser";
 
 (async () => {
     try {
