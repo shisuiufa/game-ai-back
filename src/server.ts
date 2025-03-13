@@ -3,6 +3,7 @@ import { PORT } from "./config/app";
 import sequelize from "./config/database";
 import { createServer } from "http";
 import GameWebSocket from "../src/ws/GameWebSocket";
+import LobbyCleanupService from "./services/v1/lobby.cleanup.service";
 
 (async () => {
     try {
@@ -15,6 +16,8 @@ import GameWebSocket from "../src/ws/GameWebSocket";
         const server = createServer(app);
 
         new GameWebSocket(server);
+
+        LobbyCleanupService.startAutoCleanup();
 
         server.listen(PORT, () => {
             console.log(`🚀 Server running on http://localhost:${PORT}`);

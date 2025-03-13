@@ -4,19 +4,34 @@ import redis from "../../config/redis";
 import { randomUUID } from "crypto";
 import UserRepository from "../../repositories/v1/user.repository";
 
-class LobbyService {
+export default class LobbyService {
+    private readonly TTL_SECONDS: number;
+
+    constructor(ttlSeconds: number) {
+        this.TTL_SECONDS = ttlSeconds;
+    }
+
     async getActiveLobbyIdByPlayer(playerId: number): Promise<string | null> {
         const lobbyId = await redis.get(`player:${playerId}:lobby`);
 
         if (!lobbyId) return null;
 
-        const isActive = await redis.sismember("lobbies:active", lobbyId);
+        const isActive = await redis.zscore("lobbies:active", lobbyId);
 
         return isActive ? lobbyId : null;
     }
 
-    async findExistingLobby() {
-       return await redis.srandmember("lobbies:open");
+    async findExistingLobby(): Promise<string | null> {
+        const now = Date.now();
+
+        const count = await redis.zcount("lobbies:open", now, "+inf");
+        if (count === 0) return null;
+
+        const randomIndex = Math.floor(Math.random() * count);
+
+        const lobbies = await redis.zrangebyscore("lobbies:open", now, "+inf", "LIMIT", randomIndex, 1);
+
+        return lobbies.length > 0 ? lobbies[0] : null;
     }
 
     async createLobby(player1Id: number): Promise<string> {
@@ -28,6 +43,7 @@ class LobbyService {
 
         const tx = redis.multi();
 
+
         tx.hset(`lobby:${lobbyId}` ,[
             'player1', player1Id,
             'player2', "",
@@ -36,10 +52,12 @@ class LobbyService {
             'status', "active"
         ]);
 
-        tx.expire(`lobby:${lobbyId}`, 1800)
-        tx.sadd("lobbies:open", lobbyId);
-        tx.sadd("lobbies:active", lobbyId);
-        tx.set(`player:${player1Id}:lobby`, lobbyId);
+        tx.expire(`lobby:${lobbyId}`, this.TTL_SECONDS)
+
+        tx.zadd("lobbies:open", Date.now() + this.TTL_SECONDS * 1000, lobbyId);
+        tx.zadd("lobbies:active", Date.now() + this.TTL_SECONDS * 1000, lobbyId);
+
+        tx.setex(`player:${player1Id}:lobby`, this.TTL_SECONDS, lobbyId);
 
         await tx.exec();
 
@@ -54,10 +72,12 @@ class LobbyService {
         const tx = redis.multi();
 
         tx.hset(`lobby:${lobbyId}`, "player2", player2Id);
-        tx.set(`player:${player2Id}:lobby`, lobbyId);
+        tx.expire(`lobby:${lobbyId}`, this.TTL_SECONDS);
 
-        tx.srem("lobbies:open", lobbyId);
-        tx.sadd("lobbies:active", lobbyId);
+        tx.setex(`player:${player2Id}:lobby`, this.TTL_SECONDS, lobbyId);
+
+        tx.zrem("lobbies:open", lobbyId);
+        tx.zadd("lobbies:active", Date.now() + this.TTL_SECONDS * 1000, lobbyId);
 
         await tx.exec();
 
@@ -74,8 +94,8 @@ class LobbyService {
         if (idx.length < 2) {
             await redis.del(`lobby:${lobbyId}`);
 
-            await redis.srem("lobbies:open", lobbyId);
-            await redis.srem("lobbies:active", lobbyId);
+            await redis.zrem("lobbies:open", lobbyId);
+            await redis.zrem("lobbies:active", lobbyId);
 
             await redis.del(`player:${userId}:lobby`);
 
@@ -93,9 +113,9 @@ class LobbyService {
             await UserService.addPoints(winnerId, 10);
         }
 
-        await redis.srem("lobbies:open", lobbyId);
-        await redis.srem("lobbies:active", lobbyId);
-        await redis.srem("lobbies:started", lobbyId);
+        await redis.zrem("lobbies:open", lobbyId);
+        await redis.zrem("lobbies:active", lobbyId);
+        await redis.zrem("lobbies:started", lobbyId);
         await redis.del(`lobby:${lobbyId}`);
 
         console.log(`🎉 Лобби ${lobbyId} завершено! Победитель: ${winnerId}`);
@@ -121,6 +141,15 @@ class LobbyService {
             image: 'https://habrastorage.org/getpro/habr/upload_files/a9f/2b3/4bc/a9f2b34bc409412fd453392c353597c5.jpg',
         }
     }
+
+    async updateLiveGameLobby(lobbyId: string, player1: number, player2: number) {
+        const  tx= redis.multi();
+        tx.expire(`lobby:${lobbyId}`, this.TTL_SECONDS)
+        tx.zadd("lobbies:active", Date.now() + this.TTL_SECONDS * 1000, lobbyId);
+        tx.zadd("lobbies:started", Date.now() + this.TTL_SECONDS * 1000, lobbyId);
+        tx.setex(`player:${player1}:lobby`, this.TTL_SECONDS, lobbyId);
+        tx.setex(`player:${player2}:lobby`, this.TTL_SECONDS, lobbyId);
+        await tx.exec();
+    }
 }
 
-export default new LobbyService();
