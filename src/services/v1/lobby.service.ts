@@ -3,6 +3,7 @@ import UserService from "./user.service";
 import redis from "../../config/redis";
 import { randomUUID } from "crypto";
 import UserRepository from "../../repositories/v1/user.repository";
+import User from "../../models/user";
 
 export default class LobbyService {
     private readonly TTL_SECONDS: number;
@@ -43,7 +44,6 @@ export default class LobbyService {
 
         const tx = redis.multi();
 
-
         tx.hset(`lobby:${lobbyId}` ,[
             'player1', player1Id,
             'player2', "",
@@ -64,28 +64,43 @@ export default class LobbyService {
         return lobbyId;
     }
 
-    async addPlayerToLobby(lobbyId: string, player2Id: number): Promise<void> {
-        const idx = await this.getUsersIdxLobby(lobbyId);
+    async addPlayerToLobby(lobbyId: string, player2Id: number) {
+        const newUser = await UserRepository.findById(player2Id);
 
-        if(idx.length >= 2 || idx.includes(String(player2Id))) return;
+        if (!newUser) {
+            return null;
+        }
+
+        const users = await this.getUsers(lobbyId);
+
+        if (users.length >= 2 || users.some(user => user.id === player2Id)) return null;
 
         const tx = redis.multi();
 
         tx.hset(`lobby:${lobbyId}`, "player2", player2Id);
         tx.expire(`lobby:${lobbyId}`, this.TTL_SECONDS);
-
         tx.setex(`player:${player2Id}:lobby`, this.TTL_SECONDS, lobbyId);
-
         tx.zrem("lobbies:open", lobbyId);
         tx.zadd("lobbies:active", Date.now() + this.TTL_SECONDS * 1000, lobbyId);
 
         await tx.exec();
 
-        idx.push(String(player2Id));
+        const formattedUser = {
+            id: newUser.id,
+            username: newUser.username,
+            status: "ready",
+        };
 
-        await LobbyRepository.createLobby(Number(idx[0]), Number(idx[1]), lobbyId);
+        users.push(formattedUser);
+
+        await LobbyRepository.createLobby(Number(users[0].id), Number(users[1].id), lobbyId);
 
         console.log(`🔥 Лобби ${lobbyId} заполнено! Игра начинается!`);
+
+        return {
+            player1: users[0],
+            player2: users[1],
+        };
     }
 
     async handlePlayerDisconnect(lobbyId: string, userId: number): Promise<void> {
@@ -105,12 +120,12 @@ export default class LobbyService {
         // TODO Добавить обработку когда пользователь вышел из активного лобби
     }
 
-    async endGame(lobbyId: string, winnerId: number): Promise<void> {
+    async endGame(lobbyId: string, answers: any): Promise<void> {
         const lobbyData = await redis.hgetall(`lobby:${lobbyId}`);
 
         if (lobbyData.player1 && lobbyData.player2) {
-            await LobbyRepository.setWinner(lobbyId, winnerId);
-            await UserService.addPoints(winnerId, 10);
+            await LobbyRepository.setWinner(lobbyId, Number(lobbyData.player1));
+            await UserService.addPoints(Number(lobbyData.player1), 10);
         }
 
         await redis.zrem("lobbies:open", lobbyId);
@@ -118,21 +133,20 @@ export default class LobbyService {
         await redis.zrem("lobbies:started", lobbyId);
         await redis.del(`lobby:${lobbyId}`);
 
-        console.log(`🎉 Лобби ${lobbyId} завершено! Победитель: ${winnerId}`);
+        console.log(`🎉 Лобби ${lobbyId} завершено! Победитель: ${lobbyData.player1}`);
     }
 
     async getUsersIdxLobby(lobbyId: string){
         const idx = await redis.hmget(`lobby:${lobbyId}`, "player1", "player2");
-
         return idx.filter((item): item is string => item !== null && item !== '');
     }
 
     async getUsers(lobbyId: string) {
         let idx = await this.getUsersIdxLobby(lobbyId);
 
-        const users = await UserRepository.findByIds(idx);
+        const users = await UserRepository.findByIdx(idx);
 
-        return users.map(user => ({ id: user.id, username: user.username, status: 'ready' }));
+        return users.map((user: User) => ({ id: user.id, username: user.username, status: 'ready' }));
     }
 
     async generateTask() {
