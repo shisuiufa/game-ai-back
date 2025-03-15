@@ -12,12 +12,24 @@ interface User {
     status: string;
 }
 
+interface task {
+    question: string,
+    image: string,
+}
+
+interface answer {
+    player: number | null
+    userId: number,
+    answer: string | null,
+    time: string | null
+}
+
 interface ExtWebSocket extends WebSocket {
     userId: number;
     lobbyId?: string | null;
     users?: User[];
-    tasks?: [];
-    answers?: [];
+    task?: task;
+    answers?: answer[];
 }
 
 interface TokenPayload {
@@ -104,7 +116,7 @@ class GameWebSocket {
 
         const users = ws.users;
 
-        if (!users ||users.length === 0) {
+        if (!users || users.length === 0) {
             this.sendError(ws, 'No users in the lobby', 500)
             return;
         }
@@ -118,62 +130,70 @@ class GameWebSocket {
             })
 
             setTimeout(async () => {
-                await this.startGame(lobbyId, idx);
+                await this.startGame(ws, lobbyId, idx);
             }, 10 * 1000);
         }
     }
 
     private async handleAnswer(ws: ExtWebSocket, data: any) {
-        if (!ws.lobbyId) {
+        if (!ws.lobbyId || !ws.users) {
             ws.send(JSON.stringify({status: "error", message: "Вы не находитесь в лобби"}));
             return;
         }
 
-        const [player1IdRaw, player2IdRaw, answer1, answer2] = await redis.hmget(`lobby:${ws.lobbyId}`, "player1", "player2", "answer1", "answer2");
-
-        const player1Id = Number(player1IdRaw);
-        const player2Id = Number(player2IdRaw);
-
-        const answerKey = ws.userId == player1Id ? "answer1" : ws.userId == player2Id ? "answer2" : null;
-
-        if (!answerKey) {
-            ws.send(JSON.stringify({status: "error", message: "Вы не являетесь игроком этого лобби"}));
-            return;
+        if (!ws.users.some(user => user.id == ws.userId)) {
+            return ws.send(JSON.stringify({ status: "error", message: "Вы не находитесь в лобби" }));
         }
 
-        if ((answerKey === "answer1" && answer1) || (answerKey === "answer2" && answer2)) {
-            ws.send(JSON.stringify({ status: "game", message: "Вы уже отправили ответ" }));
-            return;
+        if (ws.answers?.some(item => item.userId == ws.userId)) {
+            return ws.send(JSON.stringify({ status: "game", message: "Вы уже отправили ответ" }));
         }
+
+        const playerNumber = ws.answers?.length == 0 ? 1 : ws.answers?.length == 1 ? 2 : null;
+
+        if (!playerNumber) {
+            return ws.send(JSON.stringify({ status: "error", message: "В лобби уже есть два ответа" }));
+        }
+
+        const answerKey = `answer${playerNumber}`;
+        const playerKey = `${answerKey}_user`;
+        const timestamp = Date.now().toString();
 
         await redis.hset(`lobby:${ws.lobbyId}`, {
             [answerKey]: data.answer,
+            [playerKey]: ws.userId,
             [`${answerKey}_timestamp`]: Date.now().toString(),
         });
 
-        await this.lobbyService.updateLiveGameLobby(ws.lobbyId, player1Id, player2Id)
-
-        if (!ws.users || ws.users.length === 0) {
-            this.sendError(ws, 'No users in the lobby', 500)
-            return;
+        if (!ws.answers) {
+            ws.answers = [];
         }
 
-        const listAnswers = await this.getAnswersForLobby(ws.lobbyId, ws.users)
+        const answer: answer = {
+            userId: ws.userId,
+            answer: data.answer,
+            time: timestamp,
+            player: playerNumber
+        }
 
-        if (listAnswers[0]?.answer && listAnswers[1]?.answer) {
-            await this.lobbyService.endGame(ws.lobbyId, listAnswers);
+        ws.answers.push(answer);
+
+        const otherPlayer = ws.users.find(item => item.id != ws.userId);
+
+        if(otherPlayer){
+            this.sendAndAddAnswer(otherPlayer, {event: 'newAnswer', answer: answer, message: 'new message'})
+        }
+
+        await this.lobbyService.updateLiveGameLobby(ws.lobbyId, ws.users[0].id, ws.users[1].id)
+
+        if (ws.answers.length >= 2 && ws.answers.every(a => a.answer !== null)) {
+            await this.lobbyService.endGame(ws.lobbyId, ws.answers);
             this.sendMessageToPlayers(ws.lobbyId, {
                 status: "game",
                 lobbyId: ws.lobbyId,
                 message: "Игра завершена, оба игрока ответили",
-                answers: listAnswers,
+                answers: ws.answers,
             });
-        } else {
-            this.sendMessageToPlayers(ws.lobbyId, {
-                status: "game",
-                lobbyId: ws.lobbyId,
-                answers: listAnswers
-            })
         }
     }
 
@@ -184,18 +204,14 @@ class GameWebSocket {
         }
     }
 
-    private async startGame(lobbyId: string, idx: number[]) {
-        let taskRaw = await redis.hget(`lobby:${lobbyId}`, "task");
-
-        if (!taskRaw) {
-            taskRaw = JSON.stringify(await this.lobbyService.generateTask());
-            await redis.hset(`lobby:${lobbyId}`, "task", taskRaw);
+    private async startGame(ws: ExtWebSocket, lobbyId: string, idx: number[]) {
+        if (!ws.task) {
+            ws.task = await this.lobbyService.generateTask();
+            await redis.hset(`lobby:${lobbyId}`, "task", JSON.stringify(ws.task));
             await this.lobbyService.updateLiveGameLobby(lobbyId, idx[0], idx[1]);
         }
 
-        const task = taskRaw ? JSON.parse(taskRaw) : null;
-
-        this.sendMessageToPlayers(lobbyId, {status: "game", message: "Start game!", task});
+        this.sendMessageToPlayers(lobbyId, {status: "game", message: "Start game!", task: ws.task});
     }
 
     private async getTaskForLobby(lobbyId: string) {
@@ -217,7 +233,12 @@ class GameWebSocket {
         return TokenService.verifyToken(token, SECRET_ACCESS_TOKEN) ?? null;
     }
 
-    private async getAnswersForLobby(lobbyId: string, users: User[]): Promise<{ userId: number; answer: string | null; time: string | null }[]> {
+    private async getAnswersForLobby(lobbyId: string, users: User[]): Promise<{
+        userId: number;
+        answer: string | null;
+        time: string | null;
+        player: number | null
+    }[]> {
         const lobbyData = await redis.hmget(
             `lobby:${lobbyId}`,
             "answer1", "answer2",
@@ -237,12 +258,11 @@ class GameWebSocket {
 
                 const answer = isPlayer1 ? answer1 : isPlayer2 ? answer2 : null;
                 const time = isPlayer1 ? timestamp1Raw : isPlayer2 ? timestamp2Raw : null;
+                const player = isPlayer1 ? 1 : isPlayer2 ? 2 : null;
 
-                return answer !== null && time !== null
-                    ? { userId, answer, time }
-                    : undefined;
+                return answer !== null && time !== null ? {userId, answer, time, player} : null;
             })
-            .filter((item): item is { userId: number; answer: string; time: string } => item !== undefined)
+            .filter((item): item is { userId: number; answer: string; time: string; player: number } => item !== null)
             .sort((a, b) => Number(a.time) - Number(b.time));
     }
 
@@ -254,16 +274,16 @@ class GameWebSocket {
 
             ws.users = await this.lobbyService.getUsers(ws.lobbyId);
 
-            const task = await this.getTaskForLobby(ws.lobbyId);
+            ws.task = await this.getTaskForLobby(ws.lobbyId);
 
-            const answers = await this.getAnswersForLobby(ws.lobbyId, ws.users)
+            ws.answers = await this.getAnswersForLobby(ws.lobbyId, ws.users)
 
             ws.send(JSON.stringify({
                 status: status,
                 lobbyId: ws.lobbyId,
                 users: ws.users,
-                task,
-                answers: answers
+                task: ws.task,
+                answers: ws.answers
             }));
         }
     }
@@ -278,7 +298,11 @@ class GameWebSocket {
         });
     }
 
-    private sendAndAddUser (player: User, messageData: { event: string; newPlayer: { id: number, username: string, status: string }; message: string }) {
+    private sendAndAddUser(player: User, messageData: {
+        event: string;
+        newPlayer: { id: number, username: string, status: string };
+        message: string
+    }) {
         this.wss.clients.forEach((client) => {
             const wsClient = client as ExtWebSocket;
             if (wsClient.readyState === WebSocket.OPEN && wsClient.userId == player.id) {
@@ -289,6 +313,23 @@ class GameWebSocket {
                         username: messageData.newPlayer.username,
                         status: messageData.newPlayer.status
                     });
+                    wsClient.send(JSON.stringify(messageData));
+                }
+            }
+        });
+    }
+
+    private sendAndAddAnswer(player: User, messageData: {
+        event: string;
+        answer: answer;
+        message: string
+    }) {
+        this.wss.clients.forEach((client) => {
+            const wsClient = client as ExtWebSocket;
+            if (wsClient.readyState === WebSocket.OPEN && wsClient.userId == player.id) {
+                wsClient.answers = wsClient.answers || [];
+                if (!wsClient.answers.some(answer => answer.userId === messageData.answer.userId)) {
+                    wsClient.answers.push(messageData.answer);
                     wsClient.send(JSON.stringify(messageData));
                 }
             }
