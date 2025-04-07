@@ -7,6 +7,8 @@ import {
 } from "sequelize";
 import sequelize from "../config/database";
 import User from "./user";
+import {LobbyStatus} from "../enums/lobbyStatus";
+import LobbyAnswer from "./lobbyAnswer";
 
 class Lobby extends Model<InferAttributes<Lobby>, InferCreationAttributes<Lobby>> {
     declare id: CreationOptional<number>;
@@ -14,6 +16,11 @@ class Lobby extends Model<InferAttributes<Lobby>, InferCreationAttributes<Lobby>
     declare player1Id: number;
     declare player2Id: number;
     declare winnerId: number | null;
+    declare status: CreationOptional<LobbyStatus>;
+
+    static associate(models: { LobbyAnswer: typeof LobbyAnswer }) {
+        Lobby.hasMany(models.LobbyAnswer, { foreignKey: "lobbyId" });
+    }
 }
 
 Lobby.init(
@@ -54,6 +61,11 @@ Lobby.init(
                 key: "id",
             },
             onDelete: "SET NULL",
+        },
+        status: {
+            type: DataTypes.INTEGER,
+            allowNull: false,
+            defaultValue: LobbyStatus.STARTED,
         },
     },
     {

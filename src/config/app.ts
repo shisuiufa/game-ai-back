@@ -13,6 +13,8 @@ const DB_NAME: string = process.env.DB_NAME || "database";
 const REDIS_HOST: string = process.env.REDIS_HOST || "localhost";
 const REDIS_PASSWORD: string = process.env.REDIS_PASSWORD || "redis";
 const REDIS_PORT: number = Number(process.env.REDIS_PORT) || 6379;
+const FAL_AI_API_KEY: string = process.env.FAL_AI_API_KEY || '';
+const OPEN_AI_API_KEY: string = process.env.OPEN_AI_API_KEY || '';
 
 export {
     PORT,
@@ -25,6 +27,8 @@ export {
     DB_NAME,
     REDIS_HOST,
     REDIS_PASSWORD,
-    REDIS_PORT
+    REDIS_PORT,
+    FAL_AI_API_KEY,
+    OPEN_AI_API_KEY
 };
 

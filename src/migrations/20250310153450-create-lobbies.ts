@@ -1,10 +1,8 @@
-'use strict';
+import { QueryInterface, DataTypes, Sequelize } from 'sequelize';
+import { LobbyStatusValues, LobbyStatus } from '../enums/lobbyStatus';
 
-const { DataTypes } = require("sequelize");
-
-/** @type {import('sequelize-cli').Migration} */
 module.exports = {
-  async up (queryInterface, Sequelize) {
+  async up(queryInterface: QueryInterface, sequelize: typeof Sequelize) {
     await queryInterface.createTable("lobbies", {
       id: {
         type: DataTypes.INTEGER,
@@ -30,20 +28,34 @@ module.exports = {
         references: { model: "users", key: "id" },
         onDelete: "SET NULL",
       },
+      uuid: {
+        type: DataTypes.UUID,
+        allowNull: false,
+      },
+      status: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        defaultValue: LobbyStatus.STARTED,
+      },
       createdAt: {
         type: DataTypes.DATE,
         allowNull: false,
-        defaultValue: Sequelize.fn("NOW"),
+        defaultValue: sequelize.fn("NOW"),
       },
       updatedAt: {
         type: DataTypes.DATE,
         allowNull: false,
-        defaultValue: Sequelize.fn("NOW"),
+        defaultValue: sequelize.fn("NOW"),
       },
+    });
+
+    await queryInterface.addIndex("lobbies", ["uuid"], {
+      unique: true,
+      name: "lobbies_uuid_unique"
     });
   },
 
-  async down (queryInterface, Sequelize) {
+  async down(queryInterface: QueryInterface) {
     await queryInterface.dropTable("lobbies");
   }
 };

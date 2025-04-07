@@ -1,10 +1,7 @@
-'use strict';
+import {QueryInterface,DataTypes, Sequelize} from "sequelize";
 
-const { DataTypes } = require("sequelize");
-
-/** @type {import('sequelize-cli').Migration} */
 module.exports = {
-  async up (queryInterface, Sequelize) {
+  async up (queryInterface: QueryInterface, sequelize: typeof Sequelize) {
     await queryInterface.addColumn("users", "points", {
       type: DataTypes.INTEGER,
       allowNull: false,
@@ -12,7 +9,7 @@ module.exports = {
     });
   },
 
-  async down (queryInterface, Sequelize) {
+  async down (queryInterface: QueryInterface, sequelize: typeof Sequelize) {
     await queryInterface.removeColumn("users", "points");
   }
 };

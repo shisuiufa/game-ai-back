@@ -4,6 +4,7 @@ import bcrypt from "bcrypt";
 import { Role } from '../schemas/v1/user.schema';
 import jwt from "jsonwebtoken";
 import {SECRET_ACCESS_TOKEN} from '../config/app'
+import LobbyAnswer from "./lobbyAnswer";
 
 class User extends Model<InferAttributes<User>, InferCreationAttributes<User>> {
     declare id: CreationOptional<number>;
@@ -14,6 +15,10 @@ class User extends Model<InferAttributes<User>, InferCreationAttributes<User>> {
     declare points: CreationOptional<number>;
     declare createdAt: CreationOptional<Date>;
     declare updatedAt: CreationOptional<Date>;
+
+    static associate(models: { LobbyAnswer: typeof LobbyAnswer }) {
+        User.hasMany(models.LobbyAnswer, { foreignKey: "userId" });
+    }
 
     generateAccessJWT(): string {
         if (!SECRET_ACCESS_TOKEN) {
@@ -61,7 +66,7 @@ User.init(
             defaultValue: Role.USER,
         },
         points: {
-            type: DataTypes.NUMBER,
+            type: DataTypes.INTEGER,
             allowNull: false,
             defaultValue: 0,
         },

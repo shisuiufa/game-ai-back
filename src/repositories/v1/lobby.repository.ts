@@ -1,12 +1,17 @@
 import Lobby from "../../models/lobby";
+import {Attributes} from "sequelize";
 
 class LobbyRepository {
-    async createLobby(player1Id: number, player2Id: number, uuid: string): Promise<Lobby> {
+    async create(player1Id: number, player2Id: number, uuid: string): Promise<Lobby> {
         return await Lobby.create({player1Id, player2Id, uuid});
     }
 
-    async setWinner(lobbyUuid: string, winnerId: number): Promise<void> {
-        await Lobby.update({ winnerId }, { where: { uuid: lobbyUuid } });
+    async update(lobbyId: number, fields: Partial<Attributes<Lobby>>): Promise<void> {
+        if (Object.keys(fields).length === 0) return;
+
+        await Lobby.update(fields, {
+            where: { id: lobbyId },
+        });
     }
 }
 

@@ -2,8 +2,16 @@ import app from "./app";
 import { PORT } from "./config/app";
 import sequelize from "./config/database";
 import { createServer } from "http";
-import GameWebSocket from "../src/ws/GameWebSocket";
-import LobbyCleanupService from "./services/v1/lobby.cleanup.service";
+import GameWebSocket from "./ws/GameWebSocket";
+
+process.on("unhandledRejection", (reason) => {
+    console.error("Unhandled Rejection:", reason);
+});
+
+process.on("uncaughtException", (error) => {
+    console.error("Uncaught Exception:", error);
+    process.exit(1);
+});
 
 (async () => {
     try {
@@ -16,8 +24,6 @@ import LobbyCleanupService from "./services/v1/lobby.cleanup.service";
         const server = createServer(app);
 
         new GameWebSocket(server);
-
-        LobbyCleanupService.startAutoCleanup();
 
         server.listen(PORT, () => {
             console.log(`🚀 Server running on http://localhost:${PORT}`);

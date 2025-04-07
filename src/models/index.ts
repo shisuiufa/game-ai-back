@@ -1,10 +1,17 @@
-import { Sequelize } from 'sequelize';
+import User from "./user";
+import Lobby from "./lobby";
+import LobbyAnswer from "./lobbyAnswer";
+import Task from "./task";
 
-const env = process.env.NODE_ENV || 'development';
-const config = require(__dirname + '/../../config.js')[env];
+const models = {
+    User,
+    Lobby,
+    LobbyAnswer,
+    Task,
+};
 
-const  sequelize = config.url
-    ? new Sequelize(config.url, config)
-    : new Sequelize(config.database, config.username, config.password, config);
+User.associate?.(models);
+Lobby.associate?.(models);
+LobbyAnswer.associate?.(models);
 
-export { Sequelize, sequelize };
+export default models;

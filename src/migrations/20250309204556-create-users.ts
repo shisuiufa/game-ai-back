@@ -1,10 +1,7 @@
-'use strict';
+import {QueryInterface, DataTypes, Sequelize} from "sequelize";
 
-const { DataTypes } = require("sequelize");
-
-/** @type {import('sequelize-cli').Migration} */
 module.exports = {
-  async up(queryInterface, Sequelize) {
+  async up(queryInterface: QueryInterface, sequelize: typeof Sequelize) {
     await queryInterface.createTable("users", {
       id: {
         type: DataTypes.BIGINT,
@@ -43,7 +40,7 @@ module.exports = {
     });
   },
 
-  async down(queryInterface, Sequelize) {
+  async down(queryInterface: QueryInterface, sequelize: typeof Sequelize) {
     await queryInterface.dropTable("users");
   }
 };
