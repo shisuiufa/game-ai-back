@@ -9,9 +9,10 @@ import {Task} from "../../types/task";
 import AnswerService from "./answer.service";
 import taskRepository from "../../repositories/v1/task.repository";
 import {LobbyStatus} from "../../enums/lobbyStatus";
-import {UserWs} from "../../types/user";
-import {Answer} from "../../types/answer";
+import {Answer, ScoredAnswer, ScoredAnswerWithUser} from "../../types/answer";
 import LobbyAnswerRepository from "../../repositories/v1/lobbyAnswer.repository";
+import {UserWs} from "../../types/user";
+import {LobbyJoinResult} from "../../types/lobby";
 
 export default class LobbyService {
     private readonly taskService: TaskService;
@@ -57,7 +58,7 @@ export default class LobbyService {
         return lobbyUuid;
     }
 
-    async addPlayerToLobby(lobbyUuid: string, player2Id: number) {
+    async addPlayerToLobby(lobbyUuid: string, player2Id: number): Promise<LobbyJoinResult | null> {
         const newUser = await UserRepository.findById(player2Id);
         if (!newUser) return null
 
@@ -80,7 +81,8 @@ export default class LobbyService {
         tx.hset(`lobby:${lobbyUuid}`, [
             "lobbyId", lobby.id,
             "player2", player2Id,
-            `player${player2Id}_online`, "true"
+            `player${player2Id}_online`, "true",
+            "status", LobbyStatus.READY,
         ]);
 
         tx.set(`player:${player2Id}:lobby`, lobbyUuid);
@@ -89,8 +91,8 @@ export default class LobbyService {
         await tx.exec();
 
         return {
-            player1: users[0],
-            player2: users[1],
+            newPlayer: formattedUser,
+            lobbyId: lobby.id,
         };
     }
 
@@ -112,43 +114,81 @@ export default class LobbyService {
         }
     }
 
-    async endGame(lobbyUuid: string, lobbyId: number, users: UserWs[], answers: Answer[]) {
-        const task = await taskRepository.getByLobbyId(lobbyId);
+    private async clearRedisData(lobbyUuid: string, usersIdx: [number, number]) {
+        const tx = redis.multi();
+        tx.del(`player:${usersIdx[0]}:lobby`);
+        tx.del(`player:${usersIdx[1]}:lobby`);
+        tx.del(`lobby:${lobbyUuid}`);
+        await tx.exec();
+    }
 
-        if (!task) {
-            throw new Error("Task not found!");
+    private async buildResult(scored: ScoredAnswer[]): Promise<ScoredAnswerWithUser[]> {
+        const userIds = scored.map(a => a.userId);
+        const users = await UserRepository.findByIdx(userIds);
+
+        const userMap = new Map(
+            users.map(user => [Number(user.dataValues.id), user.dataValues])
+        );
+
+        return scored.map(item => ({
+            user: {
+                id: item.userId,
+                username: userMap.get(item.userId)?.username || 'unknown',
+            },
+            answer: item.answer,
+            score: item.score,
+            time: item.time,
+        }));
+    }
+
+    private async getUserInfo(userId: number): Promise<UserWs | null> {
+        const user = await UserRepository.findById(userId);
+        return user ? { id: user.id, username: user.username } : null;
+    }
+
+    async endGame(lobbyUuid: string, lobbyId: number, usersIdx: [number, number], answers: Answer[]) {
+        const task = await taskRepository.getByLobbyId(lobbyId);
+        if (!task) throw new Error("Task not found!");
+
+        const scored  = await this.answerService.checkAnswers(task.dataValues.prompt, answers);
+
+        if(!scored){
+            await LobbyRepository.update(lobbyId, { status: LobbyStatus.ERROR });
+            await this.clearRedisData(lobbyUuid, usersIdx);
+            return { winner: null, result: null };
         }
 
-        const data = await this.answerService.checkAnswers(task.dataValues.prompt, answers);
+        const winnerId = this.answerService.getWinnerByScores(scored);
 
-        if (data) {
-            const winnerId = await this.answerService.getWinnerByScores(data)
-            await LobbyRepository.update(lobbyId, {winnerId, status: LobbyStatus.FINISHED});
-            await UserService.addPoints(winnerId, 10)
-
-            await LobbyAnswerRepository.bulkCreate(
-                data.map(item => ({
+        await Promise.all([
+            LobbyRepository.update(lobbyId, { winnerId, status: LobbyStatus.FINISHED }),
+            UserService.addPoints(winnerId, 10),
+            LobbyAnswerRepository.bulkCreate(
+                scored.map(item => ({
                     lobbyId,
                     userId: item.userId,
                     answer: item.answer,
                     time: item.time,
                     score: item.score,
                 }))
-            );
-        } else {
-            await LobbyRepository.update(lobbyId, {status: LobbyStatus.ERROR});
-        }
+            ),
+            this.clearRedisData(lobbyUuid, usersIdx)
+        ]);
 
-        const tx = redis.multi();
-        tx.del(`player:${users[0].id}:lobby`);
-        tx.del(`player:${users[1].id}:lobby`);
-        tx.del(`lobby:${lobbyUuid}`);
-        await tx.exec();
+        const result = await this.buildResult(scored);
+        const winner = await this.getUserInfo(winnerId);
+
+        return {
+            winner: winner,
+            result: result,
+        }
     }
 
     async getUsersIdxLobby(lobbyUuid: string) {
         const idx = await redis.hmget(`lobby:${lobbyUuid}`, "player1", "player2");
-        return idx.filter((item): item is string => item !== null && item !== '');
+        return idx
+            .filter((item): item is string => item !== null && item !== '')
+            .map(Number);
     }
 
     async getUsers(lobbyUuid: string) {
@@ -162,6 +202,20 @@ export default class LobbyService {
     async getLobbyId(lobbyUuid: string): Promise<number | null> {
         const lobbyId = await redis.hget(`lobby:${lobbyUuid}`, "lobbyId");
         return lobbyId ? Number(lobbyId) : null;
+    }
+
+    async getLobby(lobbyUuid: string) {
+        const raw  = await redis.hgetall(`lobby:${lobbyUuid}`);
+
+        if (Object.keys(raw).length === 0) return null;
+
+        return {
+            id: Number(raw.lobbyId),
+            player1: Number(raw.player1),
+            player2: Number(raw.player2),
+            answer1: JSON.parse(raw.answer1),
+            answer2: JSON.parse(raw.answer2),
+        };
     }
 
     async createTask(lobbyUuid: string): Promise<Task> {

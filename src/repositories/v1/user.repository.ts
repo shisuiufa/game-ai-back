@@ -9,7 +9,7 @@ class UserRepository {
         await User.increment("points", { by: points, where: { id: userId } });
     }
 
-    async findByIdx(id: string[]): Promise<User[]> {
+    async findByIdx(id: number[]): Promise<User[]> {
         return await User.findAll({ where: { id: id } });
     }
 

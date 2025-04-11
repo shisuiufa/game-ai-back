@@ -19,11 +19,11 @@ export default class AnswerService {
 
         const data: Answer[] = [];
 
-        if(answer1) {
+        if (answer1) {
             data.push(JSON.parse(answer1))
         }
 
-        if(answer2){
+        if (answer2) {
             data.push(JSON.parse(answer2))
         }
 
@@ -56,8 +56,7 @@ export default class AnswerService {
         }));
     }
 
-    async getWinnerByScores(scores: ScoredAnswer[]): Promise<number>
-    {
+    getWinnerByScores(scores: ScoredAnswer[]) {
         if (scores.length === 0) {
             throw new Error("Невозможно определить победителя: нет данных");
         }
