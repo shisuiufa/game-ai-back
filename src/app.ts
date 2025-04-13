@@ -3,15 +3,23 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import api from "./routes/v1/api.route";
 import auth from "./routes/v1/auth.route";
+import dotenv from 'dotenv';
 
 const app: Application = express();
+dotenv.config();
 
-app.use(
-    cors({
-        origin: "http://localhost:3000",
-        credentials: true,
-    })
-);
+const corsEnabled = process.env.CORS_ENABLED === 'true';
+const allowedOrigins = process.env.CORS_ORIGINS?.split(',').map(origin => origin.trim());
+
+if (corsEnabled) {
+    app.use(
+        cors({
+            origin: allowedOrigins,
+            credentials: true,
+        })
+    );
+}
+
 
 app.disable("x-powered-by");
 app.use(cookieParser());

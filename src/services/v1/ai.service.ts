@@ -49,8 +49,6 @@ export default class AiService {
                 max_tokens: 100,
             });
 
-            console.log('AI prompt' + response.choices[0].message.content)
-
             return response.choices[0].message.content ?? null;
         } catch (error) {
             return null;

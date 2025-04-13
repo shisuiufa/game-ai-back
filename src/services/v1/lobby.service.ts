@@ -12,7 +12,7 @@ import {LobbyStatus} from "../../enums/lobbyStatus";
 import {Answer, ScoredAnswer, ScoredAnswerWithUser} from "../../types/answer";
 import LobbyAnswerRepository from "../../repositories/v1/lobbyAnswer.repository";
 import {UserWs} from "../../types/user";
-import {LobbyJoinResult} from "../../types/lobby";
+import {LobbyJoinResult, LobbyState} from "../../types/lobby";
 
 export default class LobbyService {
     private readonly taskService: TaskService;
@@ -146,7 +146,7 @@ export default class LobbyService {
         return user ? { id: user.id, username: user.username } : null;
     }
 
-    async endGame(lobbyUuid: string, lobbyId: number, usersIdx: [number, number], answers: Answer[]) {
+    async endLobby(lobbyUuid: string, lobbyId: number, usersIdx: [number, number], answers: Answer[]) {
         const task = await taskRepository.getByLobbyId(lobbyId);
         if (!task) throw new Error("Task not found!");
 
@@ -199,9 +199,54 @@ export default class LobbyService {
         return users.map((user: User) => ({id: user.id, username: user.username, status: 'ready'}));
     }
 
-    async getLobbyId(lobbyUuid: string): Promise<number | null> {
-        const lobbyId = await redis.hget(`lobby:${lobbyUuid}`, "lobbyId");
-        return lobbyId ? Number(lobbyId) : null;
+    async getLobbyState(lobbyUuid: string): Promise<LobbyState>
+    {
+        const [
+            player1,
+            player2,
+            taskRaw,
+            answer1,
+            answer2,
+            lobbyIdRaw,
+            endAtRaw
+        ] = await redis.hmget(
+            `lobby:${lobbyUuid}`,
+            "player1",
+            "player2",
+            "task",
+            "answer1",
+            "answer2",
+            "lobbyId",
+            "endAt"
+        );
+
+        const idx = [player1, player2]
+            .filter((item): item is string => item !== null && item !== '')
+            .map(Number);
+
+        const users = (await UserRepository.findByIdx(idx)).map((user: User) => ({
+            id: user.id,
+            username: user.username,
+            status: 'ready'
+        }));
+
+        const task = taskRaw ? JSON.parse(taskRaw) : null;
+
+        const answers: Answer[] = [];
+        if (answer1) answers.push(JSON.parse(answer1));
+        if (answer2) answers.push(JSON.parse(answer2));
+
+        const lobbyId = lobbyIdRaw ? Number(lobbyIdRaw) : null;
+
+        const endAt = endAtRaw ? Number(endAtRaw) : null;
+
+        return {
+            users,
+            task,
+            answers,
+            lobbyId,
+            endAt
+        };
     }
 
     async getLobby(lobbyUuid: string) {
@@ -213,8 +258,8 @@ export default class LobbyService {
             id: Number(raw.lobbyId),
             player1: Number(raw.player1),
             player2: Number(raw.player2),
-            answer1: JSON.parse(raw.answer1),
-            answer2: JSON.parse(raw.answer2),
+            answer1: raw.answer1 ? JSON.parse(raw.answer1) : null,
+            answer2: raw.answer2 ? JSON.parse(raw.answer2) : null,
         };
     }
 
@@ -224,23 +269,6 @@ export default class LobbyService {
         const generateTask = await this.taskService.generate()
 
         return this.taskService.create(lobbyId, generateTask.prompt, generateTask.image)
-    }
-
-    async restoreLobbyState(lobbyUuid: string) {
-        const users = await this.getUsers(lobbyUuid);
-
-        const task = await this.taskService.getTaskRedis(lobbyUuid);
-
-        const answers = await this.answerService.getAnswersRedis(lobbyUuid)
-
-        const lobbyId = await this.getLobbyId(lobbyUuid);
-
-        return {
-            users,
-            task,
-            answers,
-            lobbyId
-        }
     }
 
     async setPlayerOnlineStatus(lobbyUuid: string, userId: number, online: boolean) {

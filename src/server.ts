@@ -13,6 +13,7 @@ process.on("uncaughtException", (error) => {
     process.exit(1);
 });
 
+
 (async () => {
     try {
         await sequelize.authenticate();
@@ -23,7 +24,9 @@ process.on("uncaughtException", (error) => {
 
         const server = createServer(app);
 
-        new GameWebSocket(server);
+        const gameWs = new GameWebSocket(server);
+
+        await gameWs.init();
 
         server.listen(PORT, () => {
             console.log(`🚀 Server running on http://localhost:${PORT}`);

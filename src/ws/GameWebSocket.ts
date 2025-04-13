@@ -11,22 +11,25 @@ import logger from "../utils/logger";
 import {LobbyStatus} from "../enums/lobbyStatus";
 import {WsAnswers} from "../enums/wsAnswers";
 import UserRepository from "../repositories/v1/user.repository";
+import {LobbyTimerManager} from "../services/v1/lobby.timer.service";
 
 interface ExtWebSocket extends WebSocket {
     lobbyUuid: string;
     lobbyId: number,
     userId: number;
-    users?: UserWs[];
-    task?: Task;
-    answers?: Answer[];
+    users: UserWs[];
+    task: Task | null;
+    answers: Answer[] | null;
     isAlive: boolean;
     pongListenerSet?: boolean;
+    endAt: number | null
 }
 
 class GameWebSocket {
     private wss: WebSocketServer;
     private lobbyService: LobbyService;
     private temporaryClients = new Set<ExtWebSocket>();
+    private lobbyTimerManager: LobbyTimerManager;
 
     constructor(server: Server) {
         this.wss = new WebSocketServer({server});
@@ -34,6 +37,15 @@ class GameWebSocket {
         console.log("🔗 Game WebSocket сервер запущен");
         this.wss.on("connection", this.handleConnection.bind(this));
         this.setupPingPong();
+
+        this.lobbyTimerManager = new LobbyTimerManager(
+            this.endGame.bind(this),
+            this.sendMessageToPlayers.bind(this)
+        );
+    }
+
+    public async init() {
+        this.lobbyTimerManager.startPolling();
     }
 
     private async handleConnection(ws: ExtWebSocket, req: any) {
@@ -175,17 +187,40 @@ class GameWebSocket {
 
     private async handleAnswer(ws: ExtWebSocket, data: any) {
         try {
+            const lobbyKey = `lobby:${ws.lobbyUuid}`;
+            const lobbyStatusRaw = await redis.hget(lobbyKey, 'status');
+
+            const lobbyStatus = Number(lobbyStatusRaw);
+
+            if (isNaN(lobbyStatus) || lobbyStatus !== LobbyStatus.STARTED) {
+                ws.send(JSON.stringify({
+                    status: WsAnswers.GAME_ERROR,
+                    message: "Игра не началась"
+                }));
+                return;
+            }
+
             if (!ws.lobbyUuid || !ws.users) {
-                ws.send(JSON.stringify({status: "error", message: "Вы не находитесь в лобби"}));
+                ws.send(JSON.stringify({status: WsAnswers.GAME_ERROR, message: "Вы не находитесь в лобби"}));
                 return;
             }
 
             if (!ws.users.some(user => user.id == ws.userId)) {
-                return ws.send(JSON.stringify({status: "error", message: "Вы не находитесь в лобби"}));
+                return ws.send(JSON.stringify({status: WsAnswers.GAME_ERROR, message: "Вы не находитесь в лобби"}));
             }
 
             if (ws.answers?.some(item => item.userId == ws.userId)) {
-                return ws.send(JSON.stringify({status: "game", message: "Вы уже отправили ответ"}));
+                return ws.send(JSON.stringify({status: WsAnswers.GAME_ERROR, message: "Вы уже отправили ответ"}));
+            }
+
+            const lobbyEndAtRaw = await redis.hget(`lobby:${ws.lobbyUuid}`, "endAt");
+            const lobbyEndAt = lobbyEndAtRaw ? Number(lobbyEndAtRaw) : null;
+
+            if (!lobbyEndAt || Date.now() > lobbyEndAt) {
+                return ws.send(JSON.stringify({
+                    status: WsAnswers.GAME_ERROR,
+                    message: "Время для отправки ответа истекло"
+                }));
             }
 
             if (!ws.answers) {
@@ -263,20 +298,31 @@ class GameWebSocket {
 
     private async startGame(ws: ExtWebSocket) {
         try {
-            if (!ws.task) {
-                ws.task = await this.lobbyService.createTask(ws.lobbyUuid);
+            await redis.hset(`lobby:${ws.lobbyUuid}`, {
+                status: LobbyStatus.GENERATE_TASK
+            });
 
-                await redis.hset(`lobby:${ws.lobbyUuid}`, {
-                    task: JSON.stringify(ws.task),
-                    status: LobbyStatus.STARTED
-                });
+            this.sendMessageToPlayers(ws.lobbyUuid, {
+                status: WsAnswers.GAME_GENERATE_TASK,
+            });
 
-                this.sendMessageToPlayers(ws.lobbyUuid, {
-                    status: WsAnswers.GAME_START,
-                    message: "Start game!",
-                    task: ws.task
-                });
-            }
+            ws.task = await this.lobbyService.createTask(ws.lobbyUuid);
+
+            await redis.hset(`lobby:${ws.lobbyUuid}`, {
+                task: JSON.stringify(ws.task),
+                status: LobbyStatus.STARTED
+            });
+
+            const endAt = Date.now() + 60000;
+
+            this.sendMessageToPlayers(ws.lobbyUuid, {
+                status: WsAnswers.GAME_START,
+                task: ws.task,
+                endAt: endAt,
+                message: "Start game!"
+            });
+
+            await this.lobbyTimerManager.setLobbyTimer(ws.lobbyUuid, endAt - Date.now());
         } catch (e) {
             this.sendMessageToPlayers(ws.lobbyUuid, {status: WsAnswers.GAME_ERROR, message: "Failed to start game."});
         }
@@ -285,13 +331,31 @@ class GameWebSocket {
     private async endGame(lobbyUuid: string) {
         try {
             const lobby = await this.lobbyService.getLobby(lobbyUuid);
-            if (!lobby || !lobby.player1 || !lobby.player2) return;
+
+            if (!lobby || !lobby.player1 || !lobby.player2) return false;
 
             const lobbyId = Number(lobby.id);
             const players: [number, number] = [Number(lobby.player1), Number(lobby.player2)];
-            const answers: Answer[] = [lobby.answer1, lobby.answer2];
 
-            const data = await this.lobbyService.endGame(lobbyUuid, lobbyId, players, answers);
+            const answer1 = lobby.answer1;
+            const answer2 = lobby.answer2;
+
+            if (!answer1 && !answer2) {
+                return false;
+            }
+
+            this.sendMessageToPlayers(lobbyUuid, {
+                status: WsAnswers.GAME_GENERATE_RESULT,
+            });
+
+            const answers: Answer[] = [];
+
+            if (answer1) answers.push(answer1);
+            if (answer2) answers.push(answer2);
+
+            const data = await this.lobbyService.endLobby(lobbyUuid, lobbyId, players, answers);
+
+            await redis.zrem('lobbyTimers', lobbyUuid);
 
             this.sendMessageToPlayers(lobbyUuid, {
                 status: WsAnswers.GAME_END,
@@ -299,6 +363,8 @@ class GameWebSocket {
                 answers,
                 ...data
             });
+
+            return true;
         } catch (e) {
             console.error(`Failed to end game for lobby ${lobbyUuid}:`, e);
             throw e;
@@ -307,7 +373,7 @@ class GameWebSocket {
 
     private async restoreLobbyState(ws: ExtWebSocket, status = WsAnswers.GAME_JOINED) {
         try {
-            const data = await this.lobbyService.restoreLobbyState(ws.lobbyUuid);
+            const data = await this.lobbyService.getLobbyState(ws.lobbyUuid);
 
             if (data) {
                 if (data['lobbyId']) {
@@ -326,12 +392,16 @@ class GameWebSocket {
                     };
                 });
 
+                ws.endAt = data['endAt'];
+
                 ws.send(JSON.stringify({
                     status: status,
                     lobbyUuid: ws.lobbyUuid,
                     users: ws.users,
                     task: ws.task,
-                    answers: ws.answers
+                    answers: ws.answers,
+                    endAt: ws.endAt,
+                    nowAt: Date.now(),
                 }));
             }
         } catch (e) {
@@ -345,11 +415,16 @@ class GameWebSocket {
     }
 
     private sendMessageToPlayers(lobbyUuid: string, messageData: object) {
+        const messageWithTimestamp = {
+            ...messageData,
+            nowAt: Date.now(),
+        };
+
         this.wss.clients.forEach((client) => {
             const wsClient = client as ExtWebSocket;
 
-            if (wsClient.readyState === WebSocket.OPEN && wsClient.lobbyUuid == lobbyUuid) {
-                wsClient.send(JSON.stringify(messageData));
+            if (wsClient.readyState === WebSocket.OPEN && wsClient.lobbyUuid === lobbyUuid) {
+                wsClient.send(JSON.stringify(messageWithTimestamp));
             }
         });
     }
@@ -404,7 +479,6 @@ class GameWebSocket {
             }
         });
     }
-
 }
 
 export default GameWebSocket;
