@@ -265,6 +265,7 @@ export default class LobbyService {
             player2: Number(raw.player2),
             answer1: raw.answer1 ? JSON.parse(raw.answer1) : null,
             answer2: raw.answer2 ? JSON.parse(raw.answer2) : null,
+            status: raw.status ? JSON.parse(raw.status) : null,
         };
     }
 

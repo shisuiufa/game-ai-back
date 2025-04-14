@@ -12,6 +12,7 @@ import {LobbyStatus} from "../enums/lobbyStatus";
 import {WsAnswers} from "../enums/wsAnswers";
 import UserRepository from "../repositories/v1/user.repository";
 import {LobbyTimerManager} from "../services/v1/lobby.timer.service";
+import {acquireLockAndTrackAttempts} from "../utils/redisLock";
 
 interface ExtWebSocket extends WebSocket {
     lobbyUuid: string;
@@ -280,11 +281,7 @@ class GameWebSocket {
             }
 
             if (ws.answers.length >= 2 && ws.answers.every(a => a.answer !== null)) {
-                try {
-                    await this.endGame(ws.lobbyUuid);
-                } catch (err) {
-                    console.error("Error while ending game:", err);
-                }
+                await this.endGame(ws.lobbyUuid);
             }
         } catch (e) {
             throw e;
@@ -300,7 +297,6 @@ class GameWebSocket {
 
     private async startGame(ws: ExtWebSocket) {
         const lobbyId = ws.lobbyUuid;
-        const attemptsKey = `lobby:${lobbyId}:start_attempts`;
         const lockKey = `lobby:${lobbyId}:start_lock`;
 
         try {
@@ -308,27 +304,28 @@ class GameWebSocket {
 
             if (status == null || status === String(LobbyStatus.STARTED)) return;
 
-            const lockAcquired = await (redis as any).set(lockKey, "1", "NX", "EX", 5);
+            const success = await acquireLockAndTrackAttempts({
+                redis,
+                lockKey: lockKey,
+                attemptsKey: `attempts:startGame:${ws.lobbyUuid}`,
+                maxAttempts: 3,
+                lockTtl: 5,
+                attemptsTtl: 300,
+                onMaxAttemptsReached: async () => {
+                    await this.lobbyService.forceEndLobby(ws.lobbyUuid, LobbyStatus.ERROR);
+                    this.sendMessageToPlayers(ws.lobbyUuid, {
+                        status: WsAnswers.GAME_ERROR,
+                        message: "Failed to start the game.",
+                    });
+                },
+                onLockNotAcquired: () => {
+                    setTimeout(() => {
+                        this.startGame(ws);
+                    }, 10000);
+                },
+            });
 
-            if (!lockAcquired) {
-                setTimeout(() => {
-                    this.startGame(ws);
-                }, 10000);
-                return;
-            }
-
-            const attempts = Number(await redis.get(attemptsKey)) || 0;
-
-            if (attempts >= 3) {
-                await this.lobbyService.forceEndLobby(ws.lobbyUuid, LobbyStatus.ERROR)
-                this.sendMessageToPlayers(ws.lobbyUuid, {
-                    status: WsAnswers.GAME_ERROR,
-                    message: "Не удалось запустить игру. Лобби закрыто.",
-                });
-                return;
-            }
-
-            await redis.set(attemptsKey, attempts + 1, 'EX', 300);
+            if (!success) return;
 
             await redis.hset(`lobby:${ws.lobbyUuid}`, {
                 status: LobbyStatus.GENERATE_TASK
@@ -345,7 +342,7 @@ class GameWebSocket {
                 status: LobbyStatus.STARTED
             });
 
-            const endAt = Date.now() + 60000;
+            const endAt = Date.now() + 6000;
 
             this.sendMessageToPlayers(ws.lobbyUuid, {
                 status: WsAnswers.GAME_START,
@@ -376,10 +373,12 @@ class GameWebSocket {
     }
 
     private async endGame(lobbyUuid: string) {
+        const lockKey = `lobby:${lobbyUuid}:end_lock`;
+
         try {
             const lobby = await this.lobbyService.getLobby(lobbyUuid);
 
-            if (!lobby || !lobby.player1 || !lobby.player2) return false;
+            if (!lobby || lobby.status === String(LobbyStatus.FINISHED)) return true;
 
             const lobbyId = Number(lobby.id);
             const players: [number, number] = [Number(lobby.player1), Number(lobby.player2)];
@@ -391,8 +390,35 @@ class GameWebSocket {
                 return false;
             }
 
+            const success = await acquireLockAndTrackAttempts({
+                redis,
+                lockKey: lockKey,
+                attemptsKey: `attempts:endGame:${lobbyUuid}`,
+                maxAttempts: 3,
+                lockTtl: 5,
+                attemptsTtl: 300,
+                onMaxAttemptsReached: async () => {
+                    await this.lobbyService.forceEndLobby(lobbyUuid, LobbyStatus.ERROR);
+                    this.sendMessageToPlayers(lobbyUuid, {
+                        status: WsAnswers.GAME_ERROR,
+                        message: "Failed to end the game",
+                    });
+                },
+                onLockNotAcquired: () => {
+                    setTimeout(() => {
+                        this.endGame(lobbyUuid);
+                    }, 10000);
+                },
+            });
+
+            if (!success) return false;
+
             this.sendMessageToPlayers(lobbyUuid, {
                 status: WsAnswers.GAME_GENERATE_RESULT,
+            });
+
+            await redis.hset(`lobby:${lobbyUuid}`, {
+                status: LobbyStatus.GAME_GENERATE_RESULT
             });
 
             const answers: Answer[] = [];
@@ -401,8 +427,6 @@ class GameWebSocket {
             if (answer2) answers.push(answer2);
 
             const data = await this.lobbyService.endLobby(lobbyUuid, lobbyId, players, answers);
-
-            await redis.zrem('lobbyTimers', lobbyUuid);
 
             this.sendMessageToPlayers(lobbyUuid, {
                 status: WsAnswers.GAME_END,
@@ -413,8 +437,26 @@ class GameWebSocket {
 
             return true;
         } catch (e) {
-            console.error(`Failed to end game for lobby ${lobbyUuid}:`, e);
-            throw e;
+            logger.error(`[endGame] Error while end game in lobby ${lobbyUuid}:`, e);
+
+            const stillExists = await redis.exists(`lobby:${lobbyUuid}`);
+
+            if (!stillExists) {
+                return true;
+            }
+
+            await redis.hset(`lobby:${lobbyUuid}`, {
+                status: LobbyStatus.ERROR_END_GAME
+            });
+
+            setTimeout(() => {
+                this.endGame(lobbyUuid);
+            }, 10000);
+
+            return true;
+        } finally {
+            await redis.del(lockKey);
+            await redis.zrem('lobbyTimers', lobbyUuid);
         }
     }
 

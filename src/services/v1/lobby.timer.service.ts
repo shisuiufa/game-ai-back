@@ -26,7 +26,6 @@ export class LobbyTimerManager {
         this.sendMessageToPlayers(lobbyUuid, {
             event: WsAnswers.GAME_TIMER_EXTENDED,
             endAt,
-            message: "Timer extended due to no answers."
         });
     }
 
@@ -52,7 +51,6 @@ export class LobbyTimerManager {
 
         for (const lobbyUuid of expiredLobbies) {
             if (this.inProgressLobbies.has(lobbyUuid)) {
-                console.log(`⏳ Таймер для лобби ${lobbyUuid} уже обрабатывается, пропускаем...`);
                 continue;
             }
 

@@ -96,7 +96,7 @@ export default class AiService {
             return userEmbeddings.map(userEmbedding => this.cosineSimilarity(promptEmbedding, userEmbedding));
         } catch (error) {
             console.error("Ошибка при вычислении схожести:", error);
-            return null;
+            throw error;
         }
     }
 
