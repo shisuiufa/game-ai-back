@@ -356,7 +356,7 @@ class GameWebSocket {
 
             await this.lobbyTimerManager.setLobbyTimer(ws.lobbyUuid, endAt - Date.now());
         } catch (e) {
-            logger.error("❌ Error:", e);
+            logger.error(`[startGame] Error while starting game in lobby ${ws.lobbyUuid}:`, e);
 
             const stillExists = await redis.exists(`lobby:${ws.lobbyUuid}`);
 

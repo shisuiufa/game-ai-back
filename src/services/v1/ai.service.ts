@@ -1,6 +1,7 @@
 import {FAL_AI_API_KEY, OPEN_AI_API_KEY} from "../../config/app";
 import {fal} from "@fal-ai/client";
 import {OpenAI} from 'openai';
+import logger from "../../utils/logger";
 
 export default class AiService {
     private static readonly MODEL = "fal-ai/flux/dev";
@@ -50,32 +51,34 @@ export default class AiService {
             });
 
             return response.choices[0].message.content ?? null;
-        } catch (error) {
-            return null;
+        } catch (e) {
+            logger.error('[generatePrompt] Failed to generate:', e)
+            throw e;
         }
     }
 
     async generateImage(prompt: string) {
-        const result = await fal.subscribe(AiService.MODEL, {
-            input: {
+        try {
+            const result = await fal.subscribe(AiService.MODEL, {
+                input: {
+                    prompt: prompt,
+                    image_size: "landscape_4_3",
+                },
+                logs: true,
+                onQueueUpdate: (update) => {
+                    if (update.status === "IN_PROGRESS") {
+                        update.logs.map((log) => log.message).forEach(console.log);
+                    }
+                },
+            });
+
+            return {
                 prompt: prompt,
-                image_size: "landscape_4_3",
-            },
-            logs: true,
-            onQueueUpdate: (update) => {
-                if (update.status === "IN_PROGRESS") {
-                    update.logs.map((log) => log.message).forEach(console.log);
-                }
-            },
-        });
-
-        if (!result?.data?.images?.length) {
-            throw new Error("Fal.AI API не вернул изображений.");
-        }
-
-        return {
-            prompt: prompt,
-            image: result.data.images[0].url
+                image: result.data.images[0].url
+            }
+        } catch (e) {
+            logger.error('[generateImage] Failed to generate image:', e)
+            throw e;
         }
     }
 
