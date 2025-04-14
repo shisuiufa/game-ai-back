@@ -308,7 +308,7 @@ class GameWebSocket {
     private async startGame(ws: ExtWebSocket) {
         const lobbyId = ws.lobbyUuid;
         const lockKey = `lobby:${lobbyId}:start_lock`;
-
+        const attemptsKey = `attempts:startGame:${ws.lobbyUuid}`;
         try {
             const status = await redis.hget(`lobby:${lobbyId}`, 'status');
 
@@ -317,7 +317,7 @@ class GameWebSocket {
             const success = await acquireLockAndTrackAttempts({
                 redis,
                 lockKey: lockKey,
-                attemptsKey: `attempts:startGame:${ws.lobbyUuid}`,
+                attemptsKey: attemptsKey,
                 maxAttempts: 3,
                 lockTtl: 5,
                 attemptsTtl: 300,
@@ -352,7 +352,7 @@ class GameWebSocket {
                 status: LobbyStatus.STARTED
             });
 
-            const endAt = Date.now() + 6000;
+            const endAt = Date.now() + 60000;
 
             this.sendMessageToPlayers(ws.lobbyUuid, {
                 status: WsAnswers.GAME_START,
@@ -362,6 +362,8 @@ class GameWebSocket {
             });
 
             await this.lobbyTimerManager.setLobbyTimer(ws.lobbyUuid, endAt - Date.now());
+
+            await redis.del(attemptsKey);
         } catch (e) {
             logger.error(`[startGame] Error while starting game in lobby ${ws.lobbyUuid}:`, e);
 
@@ -384,6 +386,7 @@ class GameWebSocket {
 
     private async endGame(lobbyUuid: string) {
         const lockKey = `lobby:${lobbyUuid}:end_lock`;
+        const attemptsKey = `attempts:endGame:${lobbyUuid}`;
 
         try {
             const lobby = await this.lobbyService.getLobby(lobbyUuid);
@@ -403,7 +406,7 @@ class GameWebSocket {
             const success = await acquireLockAndTrackAttempts({
                 redis,
                 lockKey: lockKey,
-                attemptsKey: `attempts:endGame:${lobbyUuid}`,
+                attemptsKey: attemptsKey,
                 maxAttempts: 3,
                 lockTtl: 5,
                 attemptsTtl: 300,
@@ -445,6 +448,7 @@ class GameWebSocket {
                 ...data
             });
 
+            await redis.del(attemptsKey);
             return true;
         } catch (e) {
             logger.error(`[endGame] Error while end game in lobby ${lobbyUuid}:`, e);

@@ -32,6 +32,7 @@ export async function acquireLockAndTrackAttempts({
 
     if (attempts >= maxAttempts) {
         await onMaxAttemptsReached();
+        await redis.del(attemptsKey);
         return false;
     }
 
