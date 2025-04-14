@@ -169,7 +169,17 @@ class GameWebSocket {
 
             if (status == LobbyStatus.WAITING) return;
 
-            await this.restoreLobbyState(ws, status === LobbyStatus.STARTED ? WsAnswers.GAME_START : WsAnswers.GAME_JOINED);
+            let wsStatus = WsAnswers.GAME_JOINED;
+
+            if(status === LobbyStatus.STARTED){
+                wsStatus = WsAnswers.GAME_START
+            } else if (status === LobbyStatus.ERROR_END_GAME){
+                wsStatus = WsAnswers.GAME_GENERATE_RESULT
+            } else if (status === LobbyStatus.ERROR_START_GAME){
+                wsStatus = WsAnswers.GAME_GENERATE_TASK;
+            }
+
+            await this.restoreLobbyState(ws, wsStatus);
 
             const users = ws.users;
 
@@ -418,7 +428,7 @@ class GameWebSocket {
             });
 
             await redis.hset(`lobby:${lobbyUuid}`, {
-                status: LobbyStatus.GAME_GENERATE_RESULT
+                status: LobbyStatus.GENERATE_RESULT
             });
 
             const answers: Answer[] = [];
