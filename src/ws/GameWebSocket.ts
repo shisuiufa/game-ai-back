@@ -312,7 +312,7 @@ class GameWebSocket {
                 lockTtl: 5,
                 attemptsTtl: 300,
                 onMaxAttemptsReached: async () => {
-                    await this.lobbyService.forceEndLobby(ws.lobbyUuid, LobbyStatus.ERROR);
+                    await this.lobbyService.forceEndLobby(ws.lobbyUuid, LobbyStatus.ERROR_START_GAME);
                     this.sendMessageToPlayers(ws.lobbyUuid, {
                         status: WsAnswers.GAME_ERROR,
                         message: "Failed to start the game.",
@@ -398,7 +398,7 @@ class GameWebSocket {
                 lockTtl: 5,
                 attemptsTtl: 300,
                 onMaxAttemptsReached: async () => {
-                    await this.lobbyService.forceEndLobby(lobbyUuid, LobbyStatus.ERROR);
+                    await this.lobbyService.forceEndLobby(lobbyUuid, LobbyStatus.ERROR_END_GAME);
                     this.sendMessageToPlayers(lobbyUuid, {
                         status: WsAnswers.GAME_ERROR,
                         message: "Failed to end the game",

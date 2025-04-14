@@ -158,7 +158,7 @@ export default class LobbyService {
         const scored  = await this.answerService.checkAnswers(task.dataValues.prompt, answers);
 
         if(!scored){
-            await LobbyRepository.update(lobbyId, { status: LobbyStatus.ERROR });
+            await LobbyRepository.update(lobbyId, { status: LobbyStatus.ERROR_END_GAME });
             await this.clearRedisData(lobbyUuid, usersIdx);
             return { winner: null, result: null };
         }
