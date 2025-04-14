@@ -56,40 +56,30 @@ export default class AiService {
     }
 
     async generateImage(prompt: string) {
-        try {
-            // const result = await fal.subscribe(AiService.MODEL, {
-            //     input: {
-            //         prompt: prompt,
-            //         image_size: "landscape_4_3",
-            //     },
-            //     logs: true,
-            //     onQueueUpdate: (update) => {
-            //         if (update.status === "IN_PROGRESS") {
-            //             update.logs.map((log) => log.message).forEach(console.log);
-            //         }
-            //     },
-            // });
-            //
-            // if (!result?.data?.images?.length) {
-            //     throw new Error("Fal.AI API не вернул изображений.");
-            // }
-            //
-            // return {
-            //     prompt: prompt,
-            //     image: result.data.images[0].url
-            // }
-
-            return {
+        const result = await fal.subscribe(AiService.MODEL, {
+            input: {
                 prompt: prompt,
-                image: 'ttt'
-            }
+                image_size: "landscape_4_3",
+            },
+            logs: true,
+            onQueueUpdate: (update) => {
+                if (update.status === "IN_PROGRESS") {
+                    update.logs.map((log) => log.message).forEach(console.log);
+                }
+            },
+        });
 
-        } catch (e) {
-            return null;
+        if (!result?.data?.images?.length) {
+            throw new Error("Fal.AI API не вернул изображений.");
+        }
+
+        return {
+            prompt: prompt,
+            image: result.data.images[0].url
         }
     }
 
-    async checkSimilarity(prompt: string, userAnswers: string[]){
+    async checkSimilarity(prompt: string, userAnswers: string[]) {
         try {
             const response = await this.openai.embeddings.create({
                 model: 'text-embedding-3-large',
@@ -101,7 +91,7 @@ export default class AiService {
             const userEmbeddings = embeddings.slice(1);
 
             return userEmbeddings.map(userEmbedding => this.cosineSimilarity(promptEmbedding, userEmbedding));
-        } catch (error){
+        } catch (error) {
             console.error("Ошибка при вычислении схожести:", error);
             return null;
         }

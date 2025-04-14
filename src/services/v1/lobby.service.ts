@@ -116,9 +116,14 @@ export default class LobbyService {
 
     private async clearRedisData(lobbyUuid: string, usersIdx: [number, number]) {
         const tx = redis.multi();
-        tx.del(`player:${usersIdx[0]}:lobby`);
-        tx.del(`player:${usersIdx[1]}:lobby`);
-        tx.del(`lobby:${lobbyUuid}`);
+        for (const userId of usersIdx) {
+            if (userId != null) {
+                tx.del(`player:${userId}:lobby`);
+            }
+        }
+        if (lobbyUuid) {
+            tx.del(`lobby:${lobbyUuid}`);
+        }
         await tx.exec();
     }
 
@@ -276,5 +281,26 @@ export default class LobbyService {
             [`player${userId}_online`]: online ? "true" : "false"
         });
     }
+
+    async forceEndLobby(
+        lobbyUuid: string,
+        status: LobbyStatus,
+    ): Promise<void> {
+        const usersIdx = await this.getUsersIdxLobby(lobbyUuid);
+        const lobbyIdRaw = await redis.hget(`lobby:${lobbyUuid}`, "lobbyId");
+        const lobbyId = lobbyIdRaw ? Number(lobbyIdRaw) : null;
+
+        if (!lobbyId || usersIdx.length === 0) {
+            console.warn(`⚠️ Cannot force-end lobby ${lobbyUuid}, missing data`);
+            return;
+        }
+
+        await LobbyRepository.update(lobbyId, { status });
+
+        await this.clearRedisData(lobbyUuid, usersIdx as [number, number]);
+
+        console.log(`🏁 Lobby ${lobbyUuid} ended with status ${LobbyStatus[status]}`);
+    }
+
 }
 

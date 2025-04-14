@@ -177,7 +177,9 @@ class GameWebSocket {
                 return;
             }
 
-            if (users.length === 2 && status === LobbyStatus.WAITING || users.length === 2 && status === LobbyStatus.READY) {
+            const validStatuses = new Set([LobbyStatus.WAITING, LobbyStatus.READY, LobbyStatus.ERROR_START_GAME]);
+
+            if (users.length === 2 && validStatuses.has(status)) {
                 await this.startGame(ws);
             }
         } catch (e) {
@@ -297,7 +299,37 @@ class GameWebSocket {
     }
 
     private async startGame(ws: ExtWebSocket) {
+        const lobbyId = ws.lobbyUuid;
+        const attemptsKey = `lobby:${lobbyId}:start_attempts`;
+        const lockKey = `lobby:${lobbyId}:start_lock`;
+
         try {
+            const status = await redis.hget(`lobby:${lobbyId}`, 'status');
+
+            if (status == null || status === String(LobbyStatus.STARTED)) return;
+
+            const lockAcquired = await (redis as any).set(lockKey, "1", "NX", "EX", 5);
+
+            if (!lockAcquired) {
+                setTimeout(() => {
+                    this.startGame(ws);
+                }, 10000);
+                return;
+            }
+
+            const attempts = Number(await redis.get(attemptsKey)) || 0;
+
+            if (attempts >= 3) {
+                await this.lobbyService.forceEndLobby(ws.lobbyUuid, LobbyStatus.ERROR)
+                this.sendMessageToPlayers(ws.lobbyUuid, {
+                    status: WsAnswers.GAME_ERROR,
+                    message: "Не удалось запустить игру. Лобби закрыто.",
+                });
+                return;
+            }
+
+            await redis.set(attemptsKey, attempts + 1, 'EX', 300);
+
             await redis.hset(`lobby:${ws.lobbyUuid}`, {
                 status: LobbyStatus.GENERATE_TASK
             });
@@ -324,7 +356,20 @@ class GameWebSocket {
 
             await this.lobbyTimerManager.setLobbyTimer(ws.lobbyUuid, endAt - Date.now());
         } catch (e) {
-            this.sendMessageToPlayers(ws.lobbyUuid, {status: WsAnswers.GAME_ERROR, message: "Failed to start game."});
+            const stillExists = await redis.exists(`lobby:${ws.lobbyUuid}`);
+
+            if (!stillExists) {
+                return;
+            }
+
+            await redis.hset(`lobby:${ws.lobbyUuid}`, {
+                status: LobbyStatus.ERROR_START_GAME
+            });
+            setTimeout(() => {
+                this.startGame(ws);
+            }, 10000);
+        } finally {
+            await redis.del(lockKey);
         }
     }
 
