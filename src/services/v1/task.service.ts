@@ -33,7 +33,8 @@ export default class TaskService {
         await TaskRepository.create(lobbyId, prompt)
 
         return {
-            question: 'Guess the prompt that could generate this image.',
+            question: 'The game has begun! Guess what the prompt for the image is.  \n' +
+                'You have 60 seconds! ⏳',
             image: image,
         }
     }
