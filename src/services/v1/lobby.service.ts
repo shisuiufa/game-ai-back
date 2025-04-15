@@ -292,16 +292,18 @@ export default class LobbyService {
         const lobbyId = lobbyIdRaw ? Number(lobbyIdRaw) : null;
 
         if (!lobbyId || usersIdx.length === 0) {
-            console.warn(`⚠️ Cannot force-end lobby ${lobbyUuid}, missing data`);
             return;
         }
 
         await LobbyRepository.update(lobbyId, { status });
 
+        for (const userId of usersIdx) {
+            await UserRepository.addPoints(userId, 100);
+        }
+
         await this.clearRedisData(lobbyUuid, usersIdx as [number, number]);
 
         console.log(`🏁 Lobby ${lobbyUuid} ended with status ${LobbyStatus[status]}`);
     }
-
 }
 

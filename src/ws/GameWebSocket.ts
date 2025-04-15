@@ -369,6 +369,8 @@ class GameWebSocket {
 
             const endAt = Date.now() + 60000;
 
+            await UserRepository.removePoints(ws.userId, 100);
+
             this.sendMessageToPlayers(ws.lobbyUuid, {
                 status: WsAnswers.GAME_START,
                 task: ws.task,
