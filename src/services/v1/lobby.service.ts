@@ -167,7 +167,7 @@ export default class LobbyService {
 
         await Promise.all([
             LobbyRepository.update(lobbyId, { winnerId, status: LobbyStatus.FINISHED }),
-            UserService.addPoints(winnerId, 100),
+            UserService.addPoints(winnerId, 200),
             LobbyAnswerRepository.bulkCreate(
                 scored.map(item => ({
                     lobbyId,
