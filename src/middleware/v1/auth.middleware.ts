@@ -1,6 +1,7 @@
 import {NextFunction, Request, Response} from "express";
 import {TokenService} from "../../services/v1/token.service";
 import {SECRET_ACCESS_TOKEN} from "../../config/app";
+import UserRepository from "../../repositories/v1/user.repository";
 
 export const authMiddleware = async (req: Request, res: Response, next: NextFunction) => {
     let accessToken = req.headers.authorization;
@@ -20,7 +21,14 @@ export const authMiddleware = async (req: Request, res: Response, next: NextFunc
     let decoded = TokenService.verifyToken(accessToken, SECRET_ACCESS_TOKEN);
 
     if (decoded) {
-        req.user = decoded;
+        const user = await UserRepository.findById(decoded.id)
+
+        if (!user) {
+            res.status(404).json({ message: "User not found." })
+            return;
+        }
+
+        req.user = user;
         next();
         return
     }
@@ -37,6 +45,13 @@ export const authMiddleware = async (req: Request, res: Response, next: NextFunc
         return
     }
 
-    req.user = result.decoded;
+    const user = await UserRepository.findById(result.decoded.id);
+
+    if (!user) {
+        res.status(404).json({ message: "User not found." })
+        return;
+    }
+
+    req.user = user;
     next();
 };

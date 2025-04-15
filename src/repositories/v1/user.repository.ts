@@ -1,4 +1,5 @@
 import User from "../../models/user";
+import {UserResource} from "../../schemas/v1/user.schema";
 
 class UserRepository {
     async addPoints(userId: number, points: number): Promise<void> {
@@ -13,7 +14,7 @@ class UserRepository {
         return await User.findAll({ where: { id: id } });
     }
 
-    async findById(id: number | string): Promise<User | null> {
+    async findById(id: number | string): Promise<UserResource | null> {
         return await User.findOne({ where: { id: id } });
     }
 }

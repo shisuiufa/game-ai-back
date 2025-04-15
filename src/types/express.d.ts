@@ -1,9 +1,9 @@
-import { Request } from "express";
+import {UserResource} from "../schemas/v1/user.schema";
 
 declare global {
     namespace Express {
         interface Request {
-            user?: { id: string };
+            user?: UserResource;
         }
     }
 }

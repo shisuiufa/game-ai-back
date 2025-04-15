@@ -17,5 +17,14 @@ export const userLoginSchema = z.object({
     password: z.string(),
 });
 
+export const userSchema = z.object({
+    id: z.number(),
+    username: z.string(),
+    email: z.string().email(),
+    role: z.string(),
+    points: z.number(),
+});
+
 export type UserRegistrationResource = z.infer<typeof userRegistrationSchema>;
 export type UserLoginResource = z.infer<typeof userLoginSchema>;
+export type UserResource = z.infer<typeof userSchema>;
