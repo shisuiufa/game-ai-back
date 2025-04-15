@@ -105,16 +105,49 @@ class GameWebSocket {
                 await this.handleAnswer(ws, data);
             } else if (data.type === "typing") {
                 if (!ws.lobbyUuid || typeof data.isTyping !== "boolean") return;
-
                 this.sendToOtherPlayers(ws, {
                     status: WsAnswers.GAME_TYPING,
                     userId: ws.userId,
                     isTyping: data.isTyping
                 })
+            } else if (data.type === "reconnectToLobby") {
+                await this.reconnectToLobby(ws)
             }
         } catch (error) {
             throw error
         }
+    }
+
+    private async reconnectToLobby(ws: ExtWebSocket, status: number | null = null) {
+        let lobbyUuid: string | null = ws.lobbyUuid
+
+        if (!lobbyUuid) {
+            ws.send(JSON.stringify({
+                status: WsAnswers.GAME_LOBBY_NOT_FOUND,
+            }));
+            return;
+        }
+
+        if (status == null) {
+            const rawStatus = await redis.hget(`lobby:${lobbyUuid}`, 'status');
+            status = rawStatus ? Number(rawStatus) : null;
+        }
+
+        if (status == null || status === LobbyStatus.WAITING) return;
+
+        let wsStatus = WsAnswers.GAME_JOINED;
+
+        if (status === LobbyStatus.STARTED) {
+            wsStatus = WsAnswers.GAME_START
+        } else if (status === LobbyStatus.ERROR_END_GAME) {
+            wsStatus = WsAnswers.GAME_GENERATE_RESULT
+        } else if (status === LobbyStatus.ERROR_START_GAME) {
+            wsStatus = WsAnswers.GAME_GENERATE_TASK;
+        } else if (status === LobbyStatus.READY) {
+            wsStatus = WsAnswers.GAME_SEARCH;
+        }
+
+        await this.restoreLobbyState(ws, wsStatus);
     }
 
     private async handleFindGame(ws: ExtWebSocket) {
@@ -167,21 +200,7 @@ class GameWebSocket {
 
             const status = Number(await redis.hget(`lobby:${lobbyUuid}`, 'status'));
 
-            if (status == LobbyStatus.WAITING) return;
-
-            let wsStatus = WsAnswers.GAME_JOINED;
-
-            if(status === LobbyStatus.STARTED){
-                wsStatus = WsAnswers.GAME_START
-            } else if (status === LobbyStatus.ERROR_END_GAME){
-                wsStatus = WsAnswers.GAME_GENERATE_RESULT
-            } else if (status === LobbyStatus.ERROR_START_GAME){
-                wsStatus = WsAnswers.GAME_GENERATE_TASK;
-            } else if (status === LobbyStatus.READY){
-                wsStatus = WsAnswers.GAME_SEARCH;
-            }
-
-            await this.restoreLobbyState(ws, wsStatus);
+            await this.reconnectToLobby(ws, status)
 
             const users = ws.users;
 
@@ -190,7 +209,7 @@ class GameWebSocket {
                 return;
             }
 
-            const validStatuses = new Set([LobbyStatus.WAITING, LobbyStatus.READY, LobbyStatus.ERROR_START_GAME]);
+            const validStatuses = new Set([LobbyStatus.READY, LobbyStatus.ERROR_START_GAME]);
 
             if (validStatuses.has(status)) {
                 setTimeout(() => {
@@ -218,7 +237,7 @@ class GameWebSocket {
             }
 
             if (!ws.users.some(user => user.id == ws.userId)) {
-               return;
+                return;
             }
 
             if (ws.answers?.some(item => item.userId == ws.userId)) {
@@ -229,7 +248,7 @@ class GameWebSocket {
             const lobbyEndAt = lobbyEndAtRaw ? Number(lobbyEndAtRaw) : null;
 
             if (!lobbyEndAt || Date.now() > lobbyEndAt) {
-               return;
+                return;
             }
 
             if (!ws.answers) {

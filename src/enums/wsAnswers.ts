@@ -11,4 +11,5 @@ export enum WsAnswers {
     GAME_TIMER_EXTENDED = 10,
     GAME_GENERATE_TASK = 11,
     GAME_GENERATE_RESULT = 12,
+    GAME_LOBBY_NOT_FOUND = 13,
 }
