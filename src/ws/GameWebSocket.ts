@@ -107,7 +107,7 @@ class GameWebSocket {
                 if (!ws.lobbyUuid || typeof data.isTyping !== "boolean") return;
 
                 this.sendToOtherPlayers(ws, {
-                    event: WsAnswers.GAME_TYPING,
+                    status: WsAnswers.GAME_TYPING,
                     userId: ws.userId,
                     isTyping: data.isTyping
                 })
@@ -143,7 +143,7 @@ class GameWebSocket {
 
                     if (lobbyData) {
                         this.sendToOtherPlayers(ws, {
-                            event: WsAnswers.GAME_USER_JOINED,
+                            status: WsAnswers.GAME_USER_JOINED,
                             newPlayer: lobbyData.newPlayer,
                             message: "Второй игрок подключился, игра скоро начнется!"
                         }, (client) => {
@@ -177,6 +177,8 @@ class GameWebSocket {
                 wsStatus = WsAnswers.GAME_GENERATE_RESULT
             } else if (status === LobbyStatus.ERROR_START_GAME){
                 wsStatus = WsAnswers.GAME_GENERATE_TASK;
+            } else if (status === LobbyStatus.READY){
+                wsStatus = WsAnswers.GAME_SEARCH;
             }
 
             await this.restoreLobbyState(ws, wsStatus);
@@ -190,8 +192,10 @@ class GameWebSocket {
 
             const validStatuses = new Set([LobbyStatus.WAITING, LobbyStatus.READY, LobbyStatus.ERROR_START_GAME]);
 
-            if (users.length === 2 && validStatuses.has(status)) {
-                await this.startGame(ws);
+            if (validStatuses.has(status)) {
+                setTimeout(() => {
+                    this.startGame(ws);
+                }, 5000);
             }
         } catch (e) {
             throw e;
@@ -206,34 +210,26 @@ class GameWebSocket {
             const lobbyStatus = Number(lobbyStatusRaw);
 
             if (isNaN(lobbyStatus) || lobbyStatus !== LobbyStatus.STARTED) {
-                ws.send(JSON.stringify({
-                    status: WsAnswers.GAME_ERROR,
-                    message: "Игра не началась"
-                }));
                 return;
             }
 
             if (!ws.lobbyUuid || !ws.users) {
-                ws.send(JSON.stringify({status: WsAnswers.GAME_ERROR, message: "Вы не находитесь в лобби"}));
                 return;
             }
 
             if (!ws.users.some(user => user.id == ws.userId)) {
-                return ws.send(JSON.stringify({status: WsAnswers.GAME_ERROR, message: "Вы не находитесь в лобби"}));
+               return;
             }
 
             if (ws.answers?.some(item => item.userId == ws.userId)) {
-                return ws.send(JSON.stringify({status: WsAnswers.GAME_ERROR, message: "Вы уже отправили ответ"}));
+                return;
             }
 
             const lobbyEndAtRaw = await redis.hget(`lobby:${ws.lobbyUuid}`, "endAt");
             const lobbyEndAt = lobbyEndAtRaw ? Number(lobbyEndAtRaw) : null;
 
             if (!lobbyEndAt || Date.now() > lobbyEndAt) {
-                return ws.send(JSON.stringify({
-                    status: WsAnswers.GAME_ERROR,
-                    message: "Время для отправки ответа истекло"
-                }));
+               return;
             }
 
             if (!ws.answers) {
@@ -279,7 +275,7 @@ class GameWebSocket {
                 };
 
                 this.sendToOtherPlayers(ws, {
-                    event: WsAnswers.GAME_NEW_ANSWER,
+                    status: WsAnswers.GAME_NEW_ANSWER,
                     answer: maskedAnswer,
                     message: 'new message'
                 }, (client) => {

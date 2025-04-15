@@ -37,9 +37,4 @@ export default class TaskService {
             image: image,
         }
     }
-
-    async getTaskRedis(lobbyUuid: string) {
-        const taskRaw = await redis.hget(`lobby:${lobbyUuid}`, "task");
-        return taskRaw ? JSON.parse(taskRaw) : null;
-    }
 }
