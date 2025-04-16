@@ -36,6 +36,16 @@ export default class AnswerService {
         const sorted = answers.sort((a, b) => a.userId - b.userId);
         const texts = sorted.map(a => a.answer?.trim() ?? "");
 
+        if (sorted.length === 1) {
+            const onlyAnswer = sorted[0];
+            return [{
+                userId: onlyAnswer.userId,
+                answer: onlyAnswer.answer ?? "",
+                score: 1,
+                time: onlyAnswer.time,
+            }];
+        }
+
         const indexesWithNoAnswer = texts
             .map((t, i) => t === "" ? i : null)
             .filter(i => i !== null) as number[];
@@ -56,22 +66,20 @@ export default class AnswerService {
         }));
     }
 
-    getWinnerByScores(scores: ScoredAnswer[]) {
+    getWinnerByScores(scores: ScoredAnswer[]): number {
         if (scores.length === 0) {
             throw new Error("Невозможно определить победителя: нет данных");
         }
 
-        const sorted = [...scores].sort((a, b) => b.score - a.score);
-        const top = sorted[0];
-        const second = sorted[1];
+        const sorted = [...scores].sort((a, b) => {
+            if (b.score !== a.score) {
+                return b.score - a.score; // выше score — выше в списке
+            }
+            return parseInt(a.time) - parseInt(b.time); // быстрее — выше
+        });
 
-        if (second && top.score === second.score) {
-            const topTime = parseInt(top.time);
-            const secondTime = parseInt(second.time);
-
-            return topTime <= secondTime ? top.userId : second.userId;
-        }
-
-        return top.userId;
+        const winner = sorted[0];
+        return winner.userId;
     }
+
 }

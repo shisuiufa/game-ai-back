@@ -84,9 +84,12 @@ export default class AiService {
 
     async checkSimilarity(prompt: string, userAnswers: string[]) {
         try {
+            const normalizedPrompt = prompt.toLowerCase();
+            const normalizedAnswers = userAnswers.map(answer => answer.toLowerCase());
+
             const response = await this.openai.embeddings.create({
                 model: 'text-embedding-3-large',
-                input: [prompt, ...userAnswers],
+                input: [normalizedPrompt, ...normalizedAnswers],
             });
 
             const embeddings = response.data.map(item => item.embedding);
