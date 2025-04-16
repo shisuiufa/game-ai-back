@@ -266,6 +266,7 @@ export default class LobbyService {
             answer1: raw.answer1 ? JSON.parse(raw.answer1) : null,
             answer2: raw.answer2 ? JSON.parse(raw.answer2) : null,
             status: raw.status ? JSON.parse(raw.status) : null,
+            prompt: raw.prompt ?? null
         };
     }
 
@@ -273,6 +274,8 @@ export default class LobbyService {
         const lobbyId = Number(await redis.hget(`lobby:${lobbyUuid}`, "lobbyId"));
 
         const generateTask = await this.taskService.generate()
+
+        await redis.hset(`lobby:${lobbyUuid}`, "prompt", generateTask.prompt);
 
         return this.taskService.create(lobbyId, generateTask.prompt, generateTask.image)
     }

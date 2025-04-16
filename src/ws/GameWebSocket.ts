@@ -466,6 +466,7 @@ class GameWebSocket {
                 status: WsAnswers.GAME_END,
                 lobbyUuid,
                 answers,
+                prompt: lobby.prompt,
                 ...data
             });
 
