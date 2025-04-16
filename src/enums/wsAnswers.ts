@@ -13,4 +13,5 @@ export enum WsAnswers {
     GAME_GENERATE_RESULT = 12,
     GAME_LOBBY_NOT_FOUND = 13,
     WS_READY = 14,
+    GAME_KICKED= 3000,
 }

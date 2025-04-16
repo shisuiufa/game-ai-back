@@ -29,7 +29,7 @@ interface ExtWebSocket extends WebSocket {
 class GameWebSocket {
     private wss: WebSocketServer;
     private lobbyService: LobbyService;
-    private temporaryClients = new Set<ExtWebSocket>();
+    private temporaryClients = new Map<number, Set<ExtWebSocket>>();
     private lobbyTimerManager: LobbyTimerManager;
 
     constructor(server: Server) {
@@ -67,6 +67,20 @@ class GameWebSocket {
 
             ws.userId = Number(decoded.id);
 
+            if (!ws.userId) {
+                this.sendError(ws, "Invalid or expired token", 401);
+                return;
+            }
+
+            const existingSockets = this.temporaryClients.get(ws.userId);
+
+            if (existingSockets) {
+                for (const socket of existingSockets) {
+                    socket.close(Number(WsAnswers.GAME_KICKED), "The game is already open in another tab. This connection has replaced the previous one.");
+                }
+                this.temporaryClients.delete(ws.userId);
+            }
+
             const lobbyUuid = await this.lobbyService.getActiveLobbyUuidByPlayer(ws.userId);
 
             if (lobbyUuid) {
@@ -89,6 +103,20 @@ class GameWebSocket {
             })
 
             ws.send(JSON.stringify({ status: WsAnswers.WS_READY }))
+
+            ws.isAlive = true;
+
+            if (!this.temporaryClients.has(ws.userId)) {
+                this.temporaryClients.set(ws.userId, new Set());
+            }
+            this.temporaryClients.get(ws.userId)!.add(ws);
+
+            if (!ws.pongListenerSet) {
+                ws.on("pong", () => {
+                    ws.isAlive = true;
+                });
+                ws.pongListenerSet = true;
+            }
 
             ws.on("message", (message: string) => this.handleMessage(ws, message));
             ws.on("close", () => this.handleClose(ws));
@@ -113,7 +141,10 @@ class GameWebSocket {
                     isTyping: data.isTyping
                 })
             } else if (data.type === "reconnectToLobby") {
-                await this.reconnectToLobby(ws)
+                const status = await this.reconnectToLobby(ws)
+                if(status) {
+                    await this.maybeStartGame(ws, status)
+                }
             }
         } catch (error) {
             throw error
@@ -135,7 +166,7 @@ class GameWebSocket {
             status = rawStatus ? Number(rawStatus) : null;
         }
 
-        if (status == null || status === LobbyStatus.WAITING) return;
+        if (status == null) return;
 
         let wsStatus = WsAnswers.GAME_JOINED;
 
@@ -145,11 +176,15 @@ class GameWebSocket {
             wsStatus = WsAnswers.GAME_GENERATE_RESULT
         } else if (status === LobbyStatus.ERROR_START_GAME) {
             wsStatus = WsAnswers.GAME_GENERATE_TASK;
-        } else if (status === LobbyStatus.READY) {
+        } else if (status === LobbyStatus.WAITING) {
             wsStatus = WsAnswers.GAME_SEARCH;
+        } else if (status === LobbyStatus.READY) {
+            wsStatus = WsAnswers.GAME_READY;
         }
 
         await this.restoreLobbyState(ws, wsStatus);
+
+        return status;
     }
 
     private async handleFindGame(ws: ExtWebSocket) {
@@ -163,14 +198,6 @@ class GameWebSocket {
 
                 if (!lobbyUuid) {
                     lobbyUuid = await this.lobbyService.createLobby(ws.userId);
-                    ws.isAlive = true;
-                    this.temporaryClients.add(ws);
-                    if (!ws.pongListenerSet) {
-                        ws.on("pong", () => {
-                            ws.isAlive = true;
-                        });
-                        ws.pongListenerSet = true;
-                    }
                 } else {
                     const lobbyData = await this.lobbyService.addPlayerToLobby(lobbyUuid, ws.userId);
 
@@ -211,13 +238,7 @@ class GameWebSocket {
                 return;
             }
 
-            const validStatuses = new Set([LobbyStatus.READY, LobbyStatus.ERROR_START_GAME]);
-
-            if (validStatuses.has(status)) {
-                setTimeout(() => {
-                    this.startGame(ws);
-                }, 5000);
-            }
+            await this.maybeStartGame(ws, status)
         } catch (e) {
             throw e;
         }
@@ -316,9 +337,35 @@ class GameWebSocket {
     }
 
     private async handleClose(ws: ExtWebSocket) {
-        if (ws.lobbyUuid && ws.userId) {
-            await this.lobbyService.handlePlayerDisconnect(ws.lobbyUuid, ws.userId);
-            this.temporaryClients.delete(ws);
+        if(!ws.userId) return
+
+        const sockets = this.temporaryClients.get(ws.userId);
+
+        if (sockets) {
+            sockets.delete(ws);
+
+            if (sockets.size === 0) {
+                this.temporaryClients.delete(ws.userId);
+                if (ws.lobbyUuid) {
+                    await this.lobbyService.handlePlayerDisconnect(ws.lobbyUuid, ws.userId);
+                }
+            }
+        }
+    }
+
+    private async maybeStartGame (ws: ExtWebSocket, status: number) {
+        const validStatuses = new Set([LobbyStatus.READY, LobbyStatus.ERROR_START_GAME]);
+
+        if (validStatuses.has(status)) {
+            this.sendMessageToPlayers(ws.lobbyUuid, {
+                status: WsAnswers.GAME_READY,
+                message: "Оба игрока на месте! Лобби готово.",
+                users: ws.users
+            });
+
+            setTimeout(() => {
+                this.startGame(ws);
+            }, 5000);
         }
     }
 
@@ -562,28 +609,35 @@ class GameWebSocket {
 
     private setupPingPong() {
         setInterval(async () => {
-            for (const ws of this.temporaryClients) {
-                if (!ws.isAlive) {
-                    console.warn(`💀 Пользователь ${ws.userId} не ответил на ping. Отключаем.`);
+            for (const [userId, sockets] of this.temporaryClients.entries()) {
+                for (const ws of sockets) {
+                    if (!ws.isAlive) {
+                        console.warn(`💀 Пользователь ${ws.userId} не ответил на ping. Отключаем.`);
 
-                    await this.lobbyService.handlePlayerDisconnect(ws.lobbyUuid, ws.userId);
-                    ws.terminate();
-                    this.temporaryClients.delete(ws);
+                        await this.lobbyService.handlePlayerDisconnect(ws.lobbyUuid, ws.userId);
+                        ws.terminate();
+                        sockets.delete(ws);
 
-                    continue;
-                }
+                        // Если у пользователя больше нет сокетов — удалить из Map
+                        if (sockets.size === 0) {
+                            this.temporaryClients.delete(userId);
+                        }
 
-                ws.isAlive = false;
-
-                try {
-                    if (ws.readyState === WebSocket.OPEN) {
-                        ws.ping();
+                        continue;
                     }
-                } catch (err) {
-                    console.error("❌ Ошибка при ping:", err);
+
+                    ws.isAlive = false;
+
+                    try {
+                        if (ws.readyState === WebSocket.OPEN) {
+                            ws.ping();
+                        }
+                    } catch (err) {
+                        console.error("❌ Ошибка при ping:", err);
+                    }
                 }
             }
-        }, 30000);
+        }, 5000);
     }
 
     private sendToOtherPlayers(

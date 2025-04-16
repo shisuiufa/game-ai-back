@@ -24,27 +24,26 @@ export default class AiService {
                 messages: [
                     {
                         role: 'system',
-                        content: 'You are an expert in creating prompts for text-based and multimodal AI models. Your task is to generate random but highly effective prompts that are perfectly suited for FLUX. The prompts should be universal, creative, and cover a wide range of topics, including art, design, technology, science, business, and entertainment.' +
-                            'Each prompt must include the following elements:' +
-                            '- A clear goal or task that needs to be solved (e.g., idea generation, data analysis, creating images or texts).' +
-                            '- Context that will help the model better understand the request (e.g., audience, style, environment, or limitations).' +
-                            '- Style or tone in which the work should be performed (e.g., professional, artistic, humorous, minimalist). ' +
-                            '- Constraints or specific requirements, if necessary (e.g., response format, keywords, technical parameters).' +
-                            'The prompts should be structured, concise, and easily adaptable for various tasks. Generate prompts in a format that can be immediately used for GPT-4o.' +
-                            'This prompt provides clear instructions for the model to generate high-quality and versatile prompts that can be effectively used for working with FLUX.',
+                        content: 'You are a Prompt Engineer for FLUX — a neural network that generates images based on short, highly visual prompts.\n' +
+                            'Your job is to define the rules for creating prompts that FLUX can use. FLUX only accepts prompts that follow these constraints:\n' +
+                            'Only one prompt per request\n' +
+                            'Maximum length: 120 characters\n' +
+                            'The prompt must be visually rich, atmospheric, and imaginative\n' +
+                            'Themes must be randomized from categories such as:\n' +
+                            '– Cyberpunk\n' +
+                            '– Space / Sci-Fi\n' +
+                            '– Futuristic Tech\n' +
+                            '– Medieval / Fantasy\n' +
+                            '– Surrealism\n' +
+                            '– Post-Apocalypse\n' +
+                            '– Biopunk / Steampunk\n' +
+                            'Prompts must be entirely unique every time — no reused structures, phrases, or visuals\n' +
+                            'Output only the raw prompt text. No quotes, no labels, no explanations.\n' +
+                            'Make it vivid, cinematic, and artistically inspiring.',
                     },
                     {
                         role: 'user',
-                        content: `
-                        Generate a random AI art prompt in English (≤120 chars) for an image-generation model like FLUX. The prompt should be creative, visually rich, and concise. 
-                        Use a random style from: nature, fantasy, sci-fi, cyberpunk, horror, surreal, abstract, futuristic, dreamlike. 
-                        Example outputs:  
-                        - "Neon-lit cyberpunk alley, rain-soaked streets, glowing holograms."  
-                        - "Ancient castle floating in the sky, surrounded by glowing clouds."  
-                        - "Futuristic robot warrior standing in a ruined city at sunset."  
-                        - "Dark enchanted forest with glowing mushrooms and misty fog."  
-                        The prompt must not exceed 120 characters. Generate a new unique idea every time.
-                        "`,
+                        content: `Generate a single random prompt for FLUX image generation`,
                     },
                 ],
                 max_tokens: 100,
