@@ -252,15 +252,31 @@ class GameWebSocket {
             const lobbyStatus = Number(lobbyStatusRaw);
 
             if (isNaN(lobbyStatus) || lobbyStatus !== LobbyStatus.STARTED) {
-                return;
+                return ws.send(JSON.stringify({
+                    status: WsAnswers.GAME_ANSWER_REJECTED,
+                    message: "The game has not started or is no longer active."
+                }));
             }
 
             if (!ws.lobbyUuid || !ws.users) {
-                return;
+                return ws.send(JSON.stringify({
+                    status: WsAnswers.GAME_ANSWER_REJECTED,
+                    message: "Lobby data is missing or incomplete."
+                }));
             }
 
             if (!ws.users.some(user => user.id == ws.userId)) {
-                return;
+                return ws.send(JSON.stringify({
+                    status: WsAnswers.GAME_ANSWER_REJECTED,
+                    message: "You are not a participant of this lobby."
+                }));
+            }
+
+            if (typeof data.answer !== 'string' || data.answer.length > 200) {
+                return ws.send(JSON.stringify({
+                    status: WsAnswers.GAME_ANSWER_REJECTED,
+                    message: "Your answer must be a string and no more than 200 characters long."
+                }));
             }
 
             if (ws.answers?.some(item => item.userId == ws.userId)) {
@@ -306,6 +322,11 @@ class GameWebSocket {
             }
 
             ws.answers.push(answer);
+
+            ws.send(JSON.stringify({
+                status: WsAnswers.GAME_ANSWER_ACCEPTED,
+                answer,
+            }));
 
             const otherPlayer = ws.users.find(item => item.id != ws.userId);
 

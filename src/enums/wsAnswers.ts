@@ -14,4 +14,6 @@ export enum WsAnswers {
     GAME_LOBBY_NOT_FOUND = 13,
     WS_READY = 14,
     GAME_KICKED= 3000,
+    GAME_ANSWER_ACCEPTED = 15,
+    GAME_ANSWER_REJECTED = 16,
 }
