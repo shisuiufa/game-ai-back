@@ -88,6 +88,8 @@ class GameWebSocket {
                 status: 'ready'
             })
 
+            ws.send(JSON.stringify({ status: WsAnswers.WS_READY }))
+
             ws.on("message", (message: string) => this.handleMessage(ws, message));
             ws.on("close", () => this.handleClose(ws));
         } catch (e) {
