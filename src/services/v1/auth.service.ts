@@ -1,43 +1,56 @@
 import User from "../../models/user";
 import bcrypt from "bcrypt";
 import { UserRegistrationResource, UserLoginResource } from "../../schemas/v1/user.schema";
+import {Op} from "sequelize";
 
 
 export class AuthService {
     static async register(data: UserRegistrationResource) {
-        const existingUser = await User.findOne({where: {email: data.email.toLowerCase().trim()}});
+        const email = data.email.toLowerCase().trim();
+        const username = data.username.trim();
+
+        const existingUser = await User.findOne({
+            where: {
+                [Op.or]: [
+                    { email },
+                    { username }
+                ]
+            }
+        });
 
         if (existingUser) {
-            throw { status: 400, message: "User already exists. Please log in instead." };
-        }
-
-        const existingUserByUsername = await User.findOne({ where: {username: data.username.trim() } });
-
-        if (existingUserByUsername) {
-            throw { status: 400, message: "Username already taken. Please choose another one." };
+            if (existingUser.email === email) {
+                throw { status: 400, message: "User already exists. Please log in instead." };
+            } else {
+                throw { status: 400, message: "Username already taken. Please choose another one." };
+            }
         }
 
         const user = await User.create({
-            username: data.username,
-            email: data.email.toLowerCase().trim(),
+            username: username,
+            email: email,
             password: data.password,
             role: data.role,
         });
 
         const { password, ...userData } = user.get({ plain: true });
+
         return userData;
     }
 
     static async login(data: UserLoginResource) {
+        const email = data.email.toLowerCase().trim();
+        const password = data.password.trim();
+
         const user = await User.scope("withPassword").findOne({
-            where: {email: data.email},
+            where: {email: email},
         });
 
         if(!user){
             throw { status: 401, message: "Invalid email or password." };
         }
 
-        const isPasswordValid = await bcrypt.compare(data.password, user.password);
+        const isPasswordValid = await bcrypt.compare(password, user.password);
 
         if (!isPasswordValid) {
             throw { status: 401, message: "Invalid email or password." };
